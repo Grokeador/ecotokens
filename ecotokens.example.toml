@@ -1,0 +1,104 @@
+# Configurazione di EcoTokens.
+# Copiare in `ecotokens.toml` e modificare. Ogni valore ha un default sensato:
+# quello che non serve si puo' cancellare.
+#
+# Ogni campo si puo' anche sovrascrivere da ambiente, con la forma
+# ECOTOKENS_<SEZIONE>__<CAMPO>, per esempio ECOTOKENS_SERVER__PORT=9000
+
+[server]
+host = "127.0.0.1"
+port = 8000
+# Chiave richiesta ai client in Authorization: Bearer.
+# Non e' la chiave Anthropic: e' la chiave del gateway. Lasciarla vuota va
+# bene finche' il gateway ascolta solo su localhost.
+# api_key = "una-chiave-a-piacere"
+log_level = "info"
+
+[upstream]
+# Non serve indicare la chiave Anthropic qui: l'SDK legge da solo
+# ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN o un profilo creato con
+# `ant auth login`. Metterla in un file di configurazione e' il modo piu'
+# facile per pubblicarla per sbaglio su GitHub.
+# api_key = "sk-ant-..."
+default_model = "claude-opus-5"
+default_effort = "high"
+default_max_tokens = 16000
+default_max_tokens_stream = 64000
+adaptive_thinking = true
+# "summarized" per far arrivare al client anche il ragionamento sintetizzato.
+thinking_display = "omitted"
+
+[storage]
+path = "ecotokens.db"
+# Mettere a false per non conservare a disco il testo delle conversazioni.
+# Le statistiche e il riconoscimento di sessione continuano a funzionare.
+store_message_content = true
+
+[session]
+enabled = true
+ttl_hours = 72
+
+[cache_planner]
+# La leva di risparmio principale: fino al 90% sui token di prefisso riletti.
+enabled = true
+max_breakpoints = 4
+intermediate_every_blocks = 15
+# Il primo turno scrive in cache. Sembra sprecato e invece no: prompt di sistema
+# e definizioni dei tool sono condivisi anche fra conversazioni diverse, quindi
+# quella scrittura viene riletta dalla richiesta successiva. Attivarlo conviene
+# solo se ogni richiesta ha un prefisso unico.
+skip_first_turn = false
+long_ttl_min_turns = 3
+long_ttl_min_gap_seconds = 300
+
+[context]
+enabled = true
+# Elimina i vecchi risultati dei tool dalla richiesta: in un ciclo agentico
+# sono quasi sempre la voce di spesa piu' grossa.
+clear_tool_uses = true
+clear_thinking = false
+trigger_ratio = 0.6
+hard_ratio = 0.85
+local_compaction = true
+summary_model = "claude-haiku-4-5"
+keep_recent_messages = 8
+
+[exact_cache]
+enabled = true
+ttl_seconds = 86400
+# Le richieste con tool non vengono servite da cache: il risultato dipende da
+# uno stato esterno che la cache non conosce.
+skip_when_tools = true
+max_entries = 5000
+
+[semantic_cache]
+# Disattivata di default. Servire una risposta "abbastanza simile" puo'
+# restituire una risposta sbagliata: "quanto fa 2+2" e "quanto fa 2+3" sono
+# vicinissime nello spazio degli embedding.
+# Richiede: pip install ecotokens[semantic]
+enabled = false
+model_name = "BAAI/bge-small-en-v1.5"
+similarity_threshold = 0.97
+ttl_seconds = 3600
+
+[router]
+enabled = true
+# Livello sicuro: abbassa l'effort sulle richieste semplici senza cambiare
+# modello, quindi senza invalidare la cache.
+effort_downshift = true
+simple_effort = "low"
+# Si misura la lunghezza della domanda, non del prompt intero.
+simple_max_question_tokens = 120
+# Livello rischioso: le cache sono legate al modello, quindi cambiarlo a meta'
+# conversazione azzera il prompt caching. Da attivare solo con cognizione.
+model_downgrade = false
+model_locked_per_session = true
+downgrade_target = "claude-haiku-4-5"
+
+[budget]
+enabled = false
+daily_usd = 5.0
+monthly_usd = 100.0
+# Preventivo esatto con count_tokens prima di inviare: una chiamata in piu'
+# (non fatturata) in cambio della certezza di non sforare.
+precount = false

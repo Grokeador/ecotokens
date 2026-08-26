@@ -1,0 +1,542 @@
+"""Banco di misura: quanto costa lo stesso lavoro con e senza il gateway.
+
+Il metodo e' un A/B onesto. Lo stesso identico carico di richieste viene
+eseguito due volte, sullo stesso codice e sulla stessa strada usata dalle
+richieste vere (``Gateway.complete``), cambiando una cosa sola: gli stadi di
+ottimizzazione accesi o spenti.
+
+* **senza gateway** - tutti gli stadi spenti. Resta soltanto la traduzione
+  OpenAI verso Anthropic, che non e' un'ottimizzazione ma una necessita': senza
+  di essa la richiesta verrebbe rifiutata dall'API. E' la definizione onesta di
+  "prima".
+* **con gateway** - la configurazione in esame.
+
+Ogni combinazione scenario/variante parte da un database vuoto e da un
+simulatore nuovo: senza questo, la cache riempita da una misura falserebbe la
+successiva, che e' il modo piu' facile di misurare un risparmio che non esiste.
+
+L'**ablazione** accende gli stadi uno alla volta, in modo cumulativo: la
+differenza fra due gradini e' il contributo di quello stadio, misurato invece
+che dichiarato.
+"""
+
+from __future__ import annotations
+
+import time
+import uuid
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+import anthropic
+import httpx2
+
+from .api.schemas import ChatCompletionRequest
+from .config import Settings
+from .pipeline.base import SOURCE_API
+from .simulator import create_stub
+from .store.db import Database
+from .store.repos import Store
+from .workloads import Scenario, all_scenarios
+
+
+@dataclass
+class Measurement:
+    """Esito di uno scenario sotto una variante di configurazione."""
+
+    scenario: str
+    variant: str
+    requests: int = 0
+    upstream_calls: int = 0
+    prompt_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    full_price_tokens: int = 0
+    cost_usd: float = 0.0
+    latency_ms: float = 0.0
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def cache_ratio(self) -> float:
+        return self.cache_read_tokens / self.prompt_tokens if self.prompt_tokens else 0.0
+
+
+@dataclass
+class Comparison:
+    """Confronto fra la variante di riferimento e quella in esame."""
+
+    scenario: str
+    before: Measurement
+    after: Measurement
+
+    @property
+    def saved_usd(self) -> float:
+        return self.before.cost_usd - self.after.cost_usd
+
+    @property
+    def saved_ratio(self) -> float:
+        return self.saved_usd / self.before.cost_usd if self.before.cost_usd else 0.0
+
+    @property
+    def tokens_avoided(self) -> int:
+        """Token di prompt che non sono stati pagati a prezzo pieno."""
+        return self.before.full_price_tokens - self.after.full_price_tokens
+
+
+@dataclass
+class BenchRun:
+    id: str
+    label: str
+    mode: str
+    created_at: float
+    measurements: list[Measurement] = field(default_factory=list)
+    comparisons: list[Comparison] = field(default_factory=list)
+
+    def totals(self, variant: str) -> Measurement:
+        aggregato = Measurement(scenario="tutti", variant=variant)
+        for misura in self.measurements:
+            if misura.variant != variant:
+                continue
+            aggregato.requests += misura.requests
+            aggregato.upstream_calls += misura.upstream_calls
+            aggregato.prompt_tokens += misura.prompt_tokens
+            aggregato.output_tokens += misura.output_tokens
+            aggregato.cache_read_tokens += misura.cache_read_tokens
+            aggregato.cache_write_tokens += misura.cache_write_tokens
+            aggregato.full_price_tokens += misura.full_price_tokens
+            aggregato.cost_usd += misura.cost_usd
+            aggregato.latency_ms += misura.latency_ms
+        return aggregato
+
+
+# --- varianti di configurazione ------------------------------------------
+
+BASELINE_VARIANT = "senza-gateway"
+FULL_VARIANT = "con-gateway"
+
+
+def _spegni_tutto(settings: Settings) -> None:
+    settings.cache_planner.enabled = False
+    settings.exact_cache.enabled = False
+    settings.semantic_cache.enabled = False
+    settings.context.enabled = False
+    settings.router.enabled = False
+    settings.memory.enabled = False
+    settings.budget.enabled = False
+
+
+def make_settings(apply: Callable[[Settings], None] | None = None) -> Settings:
+    """Configurazione di misura: tutto spento, poi si accende cio' che serve."""
+    settings = Settings()
+    settings.storage.path = ":memory:"
+    # Il contenuto dei messaggi non serve alla misura e rallenterebbe soltanto.
+    settings.storage.store_message_content = False
+    _spegni_tutto(settings)
+    if apply is not None:
+        apply(settings)
+    return settings
+
+
+def _abilita_cache_planner(settings: Settings) -> None:
+    settings.cache_planner.enabled = True
+
+
+def _abilita_contesto(settings: Settings) -> None:
+    _abilita_cache_planner(settings)
+    settings.context.enabled = True
+
+
+def _abilita_cache_esatta(settings: Settings) -> None:
+    _abilita_contesto(settings)
+    settings.exact_cache.enabled = True
+
+
+def _abilita_router(settings: Settings) -> None:
+    _abilita_cache_esatta(settings)
+    settings.router.enabled = True
+
+
+# Gradini cumulativi dell'ablazione: la differenza fra due gradini consecutivi
+# e' il contributo dello stadio appena acceso.
+ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
+    (BASELINE_VARIANT, None),
+    ("+ prompt caching", _abilita_cache_planner),
+    ("+ potatura contesto", _abilita_contesto),
+    ("+ cache esatta", _abilita_cache_esatta),
+    ("+ effort adattivo", _abilita_router),
+]
+
+
+# --- esecuzione -----------------------------------------------------------
+
+
+async def _run_scenario(
+    scenario: Scenario, settings: Settings, variant: str, *, live: bool
+) -> Measurement:
+    """Esegue uno scenario su un gateway appena creato e ne misura l'esito."""
+    from .server import Gateway  # importazione locale: evita un ciclo di import
+
+    gateway = Gateway(settings)
+    if not live:
+        stub_app, _ = create_stub()
+        gateway.client = anthropic.AsyncAnthropic(
+            api_key="bench",
+            base_url="http://simulatore",
+            http_client=anthropic.DefaultAsyncHttpxClient(
+                transport=httpx2.ASGITransport(app=stub_app)
+            ),
+        )
+    await gateway.startup()
+
+    misura = Measurement(scenario=scenario.name, variant=variant)
+    try:
+        for payload in scenario.requests:
+            request = ChatCompletionRequest.model_validate(payload)
+            inizio = time.monotonic()
+            _, ctx = await gateway.complete(request)
+            misura.latency_ms += (time.monotonic() - inizio) * 1000
+
+            misura.requests += 1
+            if ctx.source == SOURCE_API:
+                misura.upstream_calls += 1
+            misura.prompt_tokens += ctx.usage.total_prompt_tokens
+            misura.output_tokens += ctx.usage.output_tokens
+            misura.cache_read_tokens += ctx.usage.cache_read_tokens
+            misura.cache_write_tokens += ctx.usage.cache_creation_tokens
+            misura.full_price_tokens += ctx.usage.input_tokens
+            misura.cost_usd += ctx.cost_usd
+    finally:
+        await gateway.shutdown()
+
+    return misura
+
+
+async def run_benchmark(
+    *,
+    scenarios: list[Scenario] | None = None,
+    label: str = "misura",
+    live: bool = False,
+    project_root: Path | None = None,
+    variant_name: str = FULL_VARIANT,
+    variant_apply: Callable[[Settings], None] | None = None,
+) -> BenchRun:
+    """Confronta "senza gateway" e "con gateway" su ogni scenario."""
+    scenarios = scenarios or all_scenarios(project_root)
+    if variant_apply is None:
+        variant_apply = _abilita_router  # la configurazione completa
+
+    run = BenchRun(
+        id=uuid.uuid4().hex[:12],
+        label=label,
+        mode="live" if live else "simulato",
+        created_at=time.time(),
+    )
+
+    for scenario in scenarios:
+        prima = await _run_scenario(
+            scenario, make_settings(None), BASELINE_VARIANT, live=live
+        )
+        dopo = await _run_scenario(
+            scenario, make_settings(variant_apply), variant_name, live=live
+        )
+        run.measurements.extend([prima, dopo])
+        run.comparisons.append(Comparison(scenario=scenario.name, before=prima, after=dopo))
+
+    return run
+
+
+async def run_ablation(
+    *,
+    scenarios: list[Scenario] | None = None,
+    label: str = "ablazione",
+    live: bool = False,
+    project_root: Path | None = None,
+) -> BenchRun:
+    """Accende gli stadi uno alla volta e attribuisce il risparmio a ciascuno."""
+    scenarios = scenarios or all_scenarios(project_root)
+    run = BenchRun(
+        id=uuid.uuid4().hex[:12],
+        label=label,
+        mode="live" if live else "simulato",
+        created_at=time.time(),
+    )
+
+    for nome, applica in ABLATION_STEPS:
+        for scenario in scenarios:
+            misura = await _run_scenario(
+                scenario, make_settings(applica), nome, live=live
+            )
+            run.measurements.append(misura)
+
+    riferimento = run.totals(BASELINE_VARIANT)
+    for nome, _ in ABLATION_STEPS[1:]:
+        run.comparisons.append(
+            Comparison(scenario="tutti", before=riferimento, after=run.totals(nome))
+        )
+    return run
+
+
+def stage_contributions(run: BenchRun) -> list[dict[str, Any]]:
+    """Contributo incrementale di ogni stadio, in dollari e in percentuale.
+
+    E' la differenza fra un gradino dell'ablazione e il precedente: cio' che
+    quello stadio ha aggiunto, misurato e non dichiarato.
+    """
+    contributi: list[dict[str, Any]] = []
+    riferimento = run.totals(BASELINE_VARIANT).cost_usd
+    precedente = riferimento
+
+    for nome, _ in ABLATION_STEPS[1:]:
+        corrente = run.totals(nome).cost_usd
+        delta = precedente - corrente
+        contributi.append(
+            {
+                "stage": nome.removeprefix("+ ").strip(),
+                "saved_usd": delta,
+                "saved_ratio": delta / riferimento if riferimento else 0.0,
+                "cumulative_usd": riferimento - corrente,
+                "cumulative_ratio": (riferimento - corrente) / riferimento if riferimento else 0.0,
+            }
+        )
+        precedente = corrente
+    return contributi
+
+
+# --- persistenza ----------------------------------------------------------
+
+
+async def save_run(store: Store, run: BenchRun, *, corpus: str = "", notes: str = "") -> None:
+    """Registra la misura, cosi' il miglioramento resta visibile nel tempo."""
+    await store.db.execute(
+        """INSERT INTO bench_runs (id, created_at, label, mode, corpus, notes)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (run.id, run.created_at, run.label, run.mode, corpus, notes),
+    )
+    await store.db.executemany(
+        """INSERT INTO bench_results
+           (run_id, scenario, variant, requests, upstream_calls, prompt_tokens,
+            output_tokens, cache_read_tokens, cache_write_tokens, full_price_tokens,
+            cost_usd, latency_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            (
+                run.id,
+                misura.scenario,
+                misura.variant,
+                misura.requests,
+                misura.upstream_calls,
+                misura.prompt_tokens,
+                misura.output_tokens,
+                misura.cache_read_tokens,
+                misura.cache_write_tokens,
+                misura.full_price_tokens,
+                misura.cost_usd,
+                misura.latency_ms,
+            )
+            for misura in run.measurements
+        ],
+    )
+
+
+async def load_runs(store: Store, limit: int = 20) -> list[dict[str, Any]]:
+    """Storico delle misure, dalla piu' recente."""
+    righe = await store.db.query(
+        "SELECT * FROM bench_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+    )
+    storico: list[dict[str, Any]] = []
+    for riga in righe:
+        risultati = await store.db.query(
+            "SELECT * FROM bench_results WHERE run_id = ?", (riga["id"],)
+        )
+        storico.append({**dict(riga), "results": [dict(r) for r in risultati]})
+    return storico
+
+
+def run_to_dict(run: BenchRun) -> dict[str, Any]:
+    """Rappresentazione serializzabile, usata dalla dashboard."""
+    return {
+        "id": run.id,
+        "label": run.label,
+        "mode": run.mode,
+        "created_at": run.created_at,
+        "measurements": [asdict(misura) for misura in run.measurements],
+        "comparisons": [
+            {
+                "scenario": confronto.scenario,
+                "before": asdict(confronto.before),
+                "after": asdict(confronto.after),
+                "saved_usd": confronto.saved_usd,
+                "saved_ratio": confronto.saved_ratio,
+                "tokens_avoided": confronto.tokens_avoided,
+            }
+            for confronto in run.comparisons
+        ],
+    }
+
+
+def open_results_store(path: str) -> tuple[Database, Store]:
+    database = Database(path)
+    database.connect()
+    return database, Store(database)
+
+
+# --- ricerca della configurazione migliore --------------------------------
+
+# Candidati provati da ``ecotokens optimize``. Sono ipotesi, non certezze: il
+# senso del comando e' proprio scegliere in base alla misura invece che
+# all'intuizione, perche' su questo terreno l'intuizione sbaglia spesso.
+SWEEP_CANDIDATES: list[tuple[str, Callable[[Settings], None]]] = [
+    ("predefinita", _abilita_router),
+]
+
+
+def _candidate(nome: str, **modifiche: Any) -> tuple[str, Callable[[Settings], None]]:
+    def applica(settings: Settings) -> None:
+        _abilita_router(settings)
+        for percorso, valore in modifiche.items():
+            sezione, _, campo = percorso.partition("__")
+            setattr(getattr(settings, sezione), campo, valore)
+
+    return nome, applica
+
+
+SWEEP_CANDIDATES.extend(
+    [
+        _candidate("breakpoint anche al primo turno", cache_planner__skip_first_turn=False),
+        _candidate("TTL lungo sempre", cache_planner__long_ttl_min_turns=1,
+                   cache_planner__long_ttl_min_gap_seconds=0),
+        _candidate("marker intermedi piu' fitti", cache_planner__intermediate_every_blocks=8),
+        _candidate("solo due breakpoint", cache_planner__max_breakpoints=2),
+        _candidate("potatura aggressiva", context__trigger_ratio=0.02),
+        _candidate("effort basso piu' spesso", router__simple_max_question_tokens=400),
+    ]
+)
+
+
+@dataclass
+class SweepEntry:
+    name: str
+    cost_usd: float
+    saved_ratio: float
+    cache_ratio: float
+
+
+async def run_sweep(
+    *,
+    scenarios: list[Scenario] | None = None,
+    live: bool = False,
+    project_root: Path | None = None,
+) -> tuple[list[SweepEntry], BenchRun]:
+    """Prova piu' configurazioni e le ordina per costo misurato.
+
+    E' il meccanismo di auto-miglioramento: la configurazione consigliata non
+    e' quella che sembra sensata, e' quella che ha speso meno sui carichi veri.
+    """
+    scenarios = scenarios or all_scenarios(project_root)
+    run = BenchRun(
+        id=uuid.uuid4().hex[:12],
+        label="ricerca configurazione",
+        mode="live" if live else "simulato",
+        created_at=time.time(),
+    )
+
+    for scenario in scenarios:
+        run.measurements.append(
+            await _run_scenario(scenario, make_settings(None), BASELINE_VARIANT, live=live)
+        )
+    riferimento = run.totals(BASELINE_VARIANT).cost_usd
+
+    esiti: list[SweepEntry] = []
+    for nome, applica in SWEEP_CANDIDATES:
+        for scenario in scenarios:
+            run.measurements.append(
+                await _run_scenario(scenario, make_settings(applica), nome, live=live)
+            )
+        totale = run.totals(nome)
+        esiti.append(
+            SweepEntry(
+                name=nome,
+                cost_usd=totale.cost_usd,
+                saved_ratio=(riferimento - totale.cost_usd) / riferimento if riferimento else 0.0,
+                cache_ratio=totale.cache_ratio,
+            )
+        )
+
+    esiti.sort(key=lambda voce: voce.cost_usd)
+    return esiti, run
+
+
+# --- interazioni fra stadi ------------------------------------------------
+
+
+@dataclass
+class Interaction:
+    """Effetto di uno stadio quando un altro e' gia' attivo.
+
+    Gli stadi non sono indipendenti, e questa e' la parte meno intuitiva del
+    progetto: potare il contesto sposta il confine di taglio a ogni turno,
+    quindi cambia il prefisso e puo' distruggere una cache che stava
+    funzionando. Se conviene o no dipende dal carico, e l'unico modo di saperlo
+    e' misurarlo su quel carico.
+    """
+
+    scenario: str
+    baseline_name: str
+    variant_name: str
+    baseline_cost: float
+    variant_cost: float
+    baseline_cache_ratio: float
+    variant_cache_ratio: float
+
+    @property
+    def delta_usd(self) -> float:
+        return self.baseline_cost - self.variant_cost
+
+    @property
+    def delta_ratio(self) -> float:
+        return self.delta_usd / self.baseline_cost if self.baseline_cost else 0.0
+
+    @property
+    def helps(self) -> bool:
+        return self.delta_usd > 0
+
+
+async def measure_pruning_interaction(
+    *, live: bool = False, project_root: Path | None = None
+) -> list[Interaction]:
+    """Misura cosa succede alla cache quando si pota il contesto."""
+    from .workloads import scenario_agente, scenario_costruzione
+
+    root = project_root or Path.cwd()
+    scenari = [scenario_agente(), scenario_costruzione(root)]
+
+    def solo_cache(settings: Settings) -> None:
+        _abilita_cache_planner(settings)
+
+    def cache_piu_potatura(settings: Settings) -> None:
+        _abilita_cache_planner(settings)
+        settings.context.enabled = True
+        # Soglia bassa apposta: serve a far scattare la potatura, che con la
+        # soglia predefinita non interverrebbe mai su questi carichi.
+        settings.context.trigger_ratio = 0.02
+        settings.context.local_compaction = False
+
+    esiti: list[Interaction] = []
+    for scenario in scenari:
+        base = await _run_scenario(scenario, make_settings(solo_cache), "cache", live=live)
+        potato = await _run_scenario(
+            scenario, make_settings(cache_piu_potatura), "cache+potatura", live=live
+        )
+        esiti.append(
+            Interaction(
+                scenario=scenario.name,
+                baseline_name="solo prompt caching",
+                variant_name="caching + potatura",
+                baseline_cost=base.cost_usd,
+                variant_cost=potato.cost_usd,
+                baseline_cache_ratio=base.cache_ratio,
+                variant_cache_ratio=potato.cache_ratio,
+            )
+        )
+    return esiti
