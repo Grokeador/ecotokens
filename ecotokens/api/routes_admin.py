@@ -24,6 +24,10 @@ async def stats(gateway=Depends(_gateway)) -> dict[str, Any]:
     baseline = float(data.get("baseline_cost_usd") or 0)
     cost = float(data.get("cost_usd") or 0)
     data["saved_ratio"] = (baseline - cost) / baseline if baseline else 0.0
+    # Quanto sbaglia lo stimatore locale rispetto al conteggio vero. E' la
+    # sola misura del progetto che non costa niente ottenere: i campioni
+    # arrivano dalle chiamate a count_tokens, gia' pagate per altro.
+    data["calibration"] = await gateway.store.estimate_calibration()
     data["stages_enabled"] = {
         stage.name: bool(getattr(stage, "enabled", True))
         for stage in gateway.pipeline.stages

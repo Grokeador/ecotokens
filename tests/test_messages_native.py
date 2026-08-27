@@ -197,3 +197,34 @@ def test_count_tokens_riporta_la_stima_locale(client):
 
 def test_count_tokens_corpo_non_valido(client):
     assert client.post("/v1/messages/count_tokens", json={"model": "x"}).status_code == 400
+
+
+# --- taratura dello stimatore ---------------------------------------------
+
+
+def test_count_tokens_registra_lo_scarto(client):
+    """La chiamata era gia' stata fatta: registrarla non costa un token."""
+    client.post("/v1/messages/count_tokens", json=payload("Una domanda qualsiasi"))
+
+    taratura = client.get("/admin/stats").json()["calibration"]
+    assert taratura, "deve esserci almeno un campione"
+    riga = taratura[0]
+    assert riga["model"] == "claude-opus-5"
+    assert riga["campioni"] == 1
+    assert riga["token_esatti"] > 0
+    assert riga["scarto_min"] <= riga["scarto_medio"] <= riga["scarto_max"]
+
+
+def test_piu_chiamate_accumulano_campioni(client):
+    for testo in ("prima", "seconda", "terza"):
+        client.post("/v1/messages/count_tokens", json=payload(testo * 40))
+
+    taratura = client.get("/admin/stats").json()["calibration"]
+    assert taratura[0]["campioni"] == 3
+
+
+def test_generare_non_produce_campioni_di_taratura(client):
+    """Solo count_tokens tara: una generazione non conosce il conteggio esatto
+    dell'input separato da quello che la cache ha gia' servito."""
+    client.post("/v1/messages", json=payload())
+    assert client.get("/admin/stats").json()["calibration"] == []

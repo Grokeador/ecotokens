@@ -218,6 +218,22 @@ Non serve al chiamante, serve al progetto. Tutto quello che c'è in questo READM
 poggia su uno stimatore euristico mai tarato contro il tokenizer reale, e ogni
 chiamata a questo endpoint è un punto di taratura gratuito.
 
+Gli scarti finiscono in tabella e si leggono da `ecotokens stats`,
+`/admin/stats` e dalla sezione **Quanto vale il metro** della dashboard,
+aggregati per modello:
+
+| Modello | Campioni | Scarto medio | Intervallo |
+|---|---:|---:|---:|
+| claude-opus-5 | 41 | +4,2% | +1,1% … +7,8% |
+
+Lo scarto medio da solo ingannerebbe. Una stima che sbaglia del +5% *sempre* è
+utilizzabile — si corregge. Una che oscilla fra −30% e +40% ha media zero e non
+lo è, e la media la farebbe sembrare perfetta: per questo accanto c'è
+l'intervallo.
+
+*(La riga qui sopra è un esempio di forma, non una misura: senza credenziali il
+campione è vuoto.)*
+
 *Non provato:* in teoria un client nativo configurabile via `ANTHROPIC_BASE_URL`
 potrebbe passare dal gateway. Non l'ho verificato con nessuno in particolare.
 

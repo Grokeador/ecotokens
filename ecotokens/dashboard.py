@@ -71,6 +71,7 @@ async def build_dashboard_data(
         "history": [],
         "totals": None,
         "live": None,
+        "calibration": [],
         "config": _config_snapshot(settings),
         # Non dipende dal carico ne' dal database: e' il conteggio delle
         # stringhe che il gateway inserisce, quindi si raccoglie sempre, anche
@@ -200,6 +201,7 @@ async def build_dashboard_data(
 
         dati["history"] = _summarise_history(await load_runs(store, limit=12))
         dati["live"] = await _live_traffic(store)
+        dati["calibration"] = await store.estimate_calibration()
     finally:
         database.close()
 
@@ -334,6 +336,7 @@ def _body(data: dict[str, Any]) -> str:
         _prompt(data),
         _cache_key(data),
         _overhead(data),
+        _calibration(data),
         _progress(data),
         _tuning(data),
         _history(data),
@@ -830,6 +833,71 @@ def _overhead(data: dict[str, Any]) -> str:
     <table>
       <thead><tr><th>Voce</th><th class="num">Prima</th>
       <th class="num">Adesso</th><th class="num">Variazione</th></tr></thead>
+      <tbody>{''.join(righe)}</tbody>
+    </table>
+  </div>
+</section>"""
+
+
+def _calibration(data: dict[str, Any]) -> str:
+    """Quanto sbaglia lo stimatore locale, misurato contro il tokenizer vero."""
+    righe_dati = data.get("calibration") or []
+
+    if not righe_dati:
+        return """<section class="panel">
+  <div class="panel-head">
+    <h2>Quanto vale il metro</h2>
+    <p>Ogni numero di questa pagina viene da uno stimatore che conta i token dalla
+    lunghezza del testo. Va benissimo per chiedersi <em>a quale tariffa</em> un token
+    viene fatturato — ed è la domanda a cui rispondono quasi tutte le misure qui — ma
+    non dice quanto sbaglia in assoluto.</p>
+    <p>Ogni chiamata a <code>POST /v1/messages/count_tokens</code> è un punto di
+    taratura gratuito: l'API risponde con il conteggio vero, il gateway lo confronta
+    con la propria stima e registra lo scarto. Non costa un token in più, perché quella
+    chiamata era già stata fatta per rispondere al client.</p>
+    <p class="caveat">Finora <strong>nessun campione</strong>. Servono credenziali e
+    almeno un client che chieda un preventivo prima di generare.</p>
+  </div>
+</section>"""
+
+    righe = []
+    for voce in righe_dati:
+        medio = voce.get("scarto_medio") or 0.0
+        minimo = voce.get("scarto_min") or 0.0
+        massimo = voce.get("scarto_max") or 0.0
+        ampiezza = massimo - minimo
+        # Una stima che sbaglia sempre allo stesso modo si corregge; una che
+        # oscilla non si corregge, e la media da sola non lo farebbe vedere.
+        stato = "good" if abs(medio) < 0.05 and ampiezza < 0.15 else "bad" if ampiezza > 0.4 else "idle"
+        righe.append(
+            f"""<tr>
+      <td class="stage-name">{_esc(voce['model'])}</td>
+      <td class="num mono">{_fmt_int(voce['campioni'])}</td>
+      <td class="num mono">{_fmt_int(voce['token_esatti'])}</td>
+      <td class="num"><span class="pill pill-{stato}">{_fmt_pct(medio, segno=True)}</span></td>
+      <td class="num mono muted">{_fmt_pct(minimo, segno=True)} … {_fmt_pct(massimo, segno=True)}</td>
+    </tr>"""
+        )
+
+    return f"""<section class="panel">
+  <div class="panel-head">
+    <h2>Quanto vale il metro</h2>
+    <p>Ogni numero di questa pagina viene da uno stimatore che conta i token dalla
+    lunghezza del testo. Questa tabella dice di quanto sbaglia, confrontandolo con il
+    conteggio vero dell'API su traffico reale.</p>
+    <p>I campioni arrivano dalle chiamate a <code>POST /v1/messages/count_tokens</code>,
+    e non costano un token in più: quella chiamata era già stata fatta per rispondere
+    al client.</p>
+    <p class="caveat">La colonna dello <strong>scarto medio</strong> da sola non basta.
+    Una stima che sbaglia del +5% sempre è utilizzabile — si corregge. Una che oscilla
+    fra −30% e +40% con media zero non lo è, e la media la farebbe sembrare perfetta:
+    per questo accanto c'è l'intervallo.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Modello</th><th class="num">Campioni</th>
+      <th class="num">Token contati</th><th class="num">Scarto medio</th>
+      <th class="num">Intervallo</th></tr></thead>
       <tbody>{''.join(righe)}</tbody>
     </table>
   </div>

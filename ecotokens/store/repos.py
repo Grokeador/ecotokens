@@ -211,6 +211,43 @@ class Store:
             (session_id, upto, text, _now()),
         )
 
+    # -- taratura dello stimatore ------------------------------------------
+
+    async def record_token_estimate(self, *, model: str, exact: int, estimated: int) -> None:
+        """Registra uno scarto fra stima locale e conteggio vero.
+
+        Costa una riga e non costa un token: la chiamata all'API era gia' stata
+        fatta per rispondere al client.
+        """
+        if exact <= 0:
+            return
+        await self.db.execute(
+            "INSERT INTO token_estimates (ts, model, exact, estimated) VALUES (?, ?, ?, ?)",
+            (_now(), model, int(exact), int(estimated)),
+        )
+
+    async def estimate_calibration(self) -> list[dict[str, Any]]:
+        """Quanto sbaglia lo stimatore locale, per modello.
+
+        Lo scarto medio dice se la stima e' sistematicamente alta o bassa; il
+        minimo e il massimo dicono se e' affidabile o solo mediamente giusta.
+        Una stima che sbaglia del +5% sempre e' utilizzabile; una che oscilla
+        fra -30% e +40% con media zero non lo e', e la media da sola non lo
+        farebbe vedere.
+        """
+        righe = await self.db.query(
+            """SELECT model,
+                      COUNT(*) AS campioni,
+                      SUM(exact) AS token_esatti,
+                      AVG((estimated - exact) * 1.0 / exact) AS scarto_medio,
+                      MIN((estimated - exact) * 1.0 / exact) AS scarto_min,
+                      MAX((estimated - exact) * 1.0 / exact) AS scarto_max
+               FROM token_estimates
+               GROUP BY model
+               ORDER BY campioni DESC"""
+        )
+        return [dict(riga) for riga in righe]
+
     # -- sostituzioni lessicali --------------------------------------------
 
     async def verified_substitutions(self, model: str | None = None) -> list[str]:

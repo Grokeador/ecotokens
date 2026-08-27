@@ -177,6 +177,11 @@ async def count_tokens(request: Request, gateway=Depends(_gateway)):
         "notes": list(ctx.notes),
     }
     if isinstance(esatto, int) and esatto:
+        # La chiamata all'API era gia' stata fatta per rispondere al client:
+        # registrare lo scarto costa una riga e non costa un token.
+        await gateway.store.record_token_estimate(
+            model=ctx.model, exact=esatto, estimated=stimato
+        )
         logger.info(
             "count_tokens | %s | esatto=%d stimato=%d scarto=%+.1f%%",
             ctx.model,

@@ -87,6 +87,19 @@ CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_events(day);
 CREATE INDEX IF NOT EXISTS idx_usage_month ON usage_events(month);
 CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id);
 
+-- Confronto fra la stima locale dei token e il conteggio vero dell'API.
+-- Ogni chiamata a /v1/messages/count_tokens ne produce una riga: e' l'unico
+-- modo che il progetto ha di sapere quanto vale il proprio metro senza
+-- spendere apposta per scoprirlo.
+CREATE TABLE IF NOT EXISTS token_estimates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL NOT NULL,
+    model       TEXT NOT NULL,
+    exact       INTEGER NOT NULL,
+    estimated   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_token_estimates_model ON token_estimates(model);
+
 CREATE TABLE IF NOT EXISTS bench_runs (
     id          TEXT PRIMARY KEY,
     created_at  REAL NOT NULL,

@@ -98,14 +98,21 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
         database.connect()
         store = Store(database)
         try:
-            return await store.stats(), await store.current_spend()
+            return (
+                await store.stats(),
+                await store.current_spend(),
+                await store.estimate_calibration(),
+            )
         finally:
             database.close()
 
-    data, (today, month) = asyncio.run(_collect())
+    data, (today, month), taratura = asyncio.run(_collect())
 
     if not data.get("requests"):
         console.print("[yellow]Nessuna richiesta registrata finora.[/]")
+        # La taratura si mostra comunque: si puo' aver chiamato solo
+        # count_tokens, che non genera niente ma produce campioni.
+        _stampa_taratura(taratura)
         return
 
     prompt_tokens = int(data.get("total_prompt_tokens") or 0)
@@ -138,6 +145,8 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
             sources.add_row(row["source"], f"{int(row['requests']):,}", f"${row['saved_usd']:.4f}")
         console.print(sources)
 
+    _stampa_taratura(taratura)
+
     by_model = data.get("by_model") or []
     if by_model:
         models = Table(title="Per modello")
@@ -148,6 +157,33 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
             models.add_row(row["model"], f"{int(row['requests']):,}", f"${row['cost_usd']:.4f}")
         console.print(models)
 
+
+def _stampa_taratura(taratura: list) -> None:
+    """Quanto sbaglia lo stimatore locale rispetto al conteggio vero.
+
+    Lo scarto medio da solo ingannerebbe: una stima che oscilla fra -30% e
+    +40% ha media zero e non e' utilizzabile, mentre una che sbaglia del +5%
+    sempre si corregge. Per questo accanto c'e' l'intervallo.
+    """
+    if not taratura:
+        return
+    metro = Table(title="Taratura dello stimatore (da count_tokens, senza costo aggiuntivo)")
+    metro.add_column("Modello")
+    metro.add_column("Campioni", justify="right")
+    metro.add_column("Scarto medio", justify="right")
+    metro.add_column("Intervallo", justify="right")
+    for riga in taratura:
+        medio = riga.get("scarto_medio") or 0.0
+        minimo = riga.get("scarto_min") or 0.0
+        massimo = riga.get("scarto_max") or 0.0
+        stile = "green" if abs(medio) < 0.05 and (massimo - minimo) < 0.15 else "yellow"
+        metro.add_row(
+            riga["model"],
+            f"{int(riga['campioni']):,}",
+            f"[{stile}]{medio * 100:+.1f}%[/]",
+            f"{minimo * 100:+.1f}% .. {massimo * 100:+.1f}%",
+        )
+    console.print(metro)
 
 @app.command()
 def purge(
