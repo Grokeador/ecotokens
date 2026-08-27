@@ -34,6 +34,9 @@ class StubState:
 
     def __init__(self) -> None:
         self.requests: list[dict[str, Any]] = []
+        # Tenute separate: `requests` significa "chiamate che generano", ed e'
+        # su quella che i test della cache contano le chiamate risparmiate.
+        self.count_requests: list[dict[str, Any]] = []
         self.cached_prefixes: dict[str, int] = {}
         self.reply_text = "Risposta di prova."
         self.tool_calls: list[dict[str, Any]] = []
@@ -43,6 +46,7 @@ class StubState:
 
     def reset(self) -> None:
         self.requests.clear()
+        self.count_requests.clear()
         self.cached_prefixes.clear()
         self.tool_calls.clear()
         self.reply_text = "Risposta di prova."
@@ -51,6 +55,10 @@ class StubState:
     @property
     def last(self) -> dict[str, Any]:
         return self.requests[-1]
+
+    @property
+    def last_count(self) -> dict[str, Any]:
+        return self.count_requests[-1]
 
 
 # Distanza massima, in blocchi di contenuto, entro cui un breakpoint riesce a
@@ -460,6 +468,7 @@ def create_stub(state: StubState | None = None) -> tuple[FastAPI, StubState]:
     @app.post("/v1/messages/count_tokens")
     async def count_tokens(request: Request):
         payload = await request.json()
+        state.count_requests.append(payload)
         total = max(1, len(json.dumps(payload, default=str)) // 4)
         return JSONResponse(content={"input_tokens": total})
 

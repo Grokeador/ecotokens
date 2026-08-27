@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..pipeline.base import PipelineAbort, RequestContext
 from ..pricing import Usage
+from ..tokens import estimate_prompt_tokens, strip_cache_control
 from ..translate.from_anthropic import to_plain_dict as _as_dict
 from .errors import error_response
 from .schemas import error_payload
@@ -97,6 +98,93 @@ async def messages(request: Request, gateway=Depends(_gateway)):
         )
     return await _call_upstream(gateway, ctx)
 
+
+# Parametri che ``count_tokens`` accetta. Non ne accetta altri: `max_tokens`
+# per esempio non ha senso per un conteggio dell'input, e passarlo e' un 400.
+COUNT_TOKENS_PARAMS = (
+    "messages",
+    "model",
+    "system",
+    "thinking",
+    "tool_choice",
+    "tools",
+    "output_config",
+)
+
+
+@router.post("/messages/count_tokens")
+async def count_tokens(request: Request, gateway=Depends(_gateway)):
+    """Conta i token di input di una richiesta, senza generarne la risposta.
+
+    Un client nativo che vuole preventivare una spesa chiama questo endpoint.
+    Senza, prende un 404 e il gateway risulta incompleto proprio per i client
+    che l'hanno cercato.
+
+    **Cosa viene contato.** La richiesta cosi' come e' arrivata, dopo la sola
+    sanificazione: alias del modello risolto, parametri di campionamento tolti.
+    Non dopo gli stadi che riscrivono il prompt - memoria, compattazione,
+    riscrittura - perche' quelli hanno effetti collaterali che un conteggio non
+    deve produrre: creerebbero sessioni, scriverebbero riassunti, chiamerebbero
+    modelli. Il numero e' quindi il costo del prompt *che hai scritto*: quello
+    che il gateway manda davvero e' di solito piu' corto, ed e' il punto.
+
+    La risposta porta anche la stima locale del gateway accanto al conteggio
+    vero. Non serve al chiamante: serve a noi. Il progetto si regge su uno
+    stimatore euristico mai tarato contro il tokenizer reale, e ogni chiamata a
+    questo endpoint e' un punto di taratura gratuito.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content=error_payload(
+                "Corpo della richiesta non e' JSON valido.", "invalid_request_error"
+            ),
+        )
+    if not isinstance(body, dict) or not body.get("messages"):
+        return JSONResponse(
+            status_code=400,
+            content=error_payload(
+                "La richiesta deve contenere il campo 'messages'.", "invalid_request_error"
+            ),
+        )
+
+    ctx = gateway.make_native_context(
+        body, {k.lower(): v for k, v in request.headers.items()}
+    )
+    # I marker di cache non vanno contati: sono una direttiva, non contenuto.
+    params = {
+        nome: strip_cache_control(ctx.params[nome])
+        for nome in COUNT_TOKENS_PARAMS
+        if ctx.params.get(nome) is not None
+    }
+
+    try:
+        risposta = await gateway.client.messages.count_tokens(**params)
+    except Exception as error:
+        return error_response(error)
+
+    payload = _as_dict(risposta)
+    esatto = payload.get("input_tokens")
+    stimato = estimate_prompt_tokens(ctx.params)
+    payload["ecotokens"] = {
+        "model": ctx.model,
+        "estimated_input_tokens": stimato,
+        "estimate_error_ratio": round((stimato - esatto) / esatto, 4)
+        if isinstance(esatto, int) and esatto
+        else None,
+        "notes": list(ctx.notes),
+    }
+    if isinstance(esatto, int) and esatto:
+        logger.info(
+            "count_tokens | %s | esatto=%d stimato=%d scarto=%+.1f%%",
+            ctx.model,
+            esatto,
+            stimato,
+            (stimato - esatto) / esatto * 100,
+        )
+    return JSONResponse(content=payload)
 
 async def _call_upstream(gateway, ctx: RequestContext) -> JSONResponse:
     resource, params = gateway.messages_resource(ctx)

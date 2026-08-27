@@ -147,14 +147,14 @@ class TokenCounter:
 
         request: dict[str, Any] = {
             "model": model,
-            "messages": _strip_cache_control(params.get("messages") or []),
+            "messages": strip_cache_control(params.get("messages") or []),
         }
         system = params.get("system")
         if system:
-            request["system"] = _strip_cache_control(system)
+            request["system"] = strip_cache_control(system)
         tools = params.get("tools")
         if tools:
-            request["tools"] = _strip_cache_control(tools)
+            request["tools"] = strip_cache_control(tools)
 
         try:
             response = await self._client.messages.count_tokens(**request)
@@ -169,7 +169,7 @@ class TokenCounter:
         return total
 
 
-def _strip_cache_control(value: Any) -> Any:
+def strip_cache_control(value: Any) -> Any:
     """Rimuove i marker cache_control da una struttura annidata.
 
     ``count_tokens`` non deve vedere i breakpoint: contano i token, non la
@@ -178,10 +178,10 @@ def _strip_cache_control(value: Any) -> Any:
     """
     if isinstance(value, dict):
         return {
-            key: _strip_cache_control(item)
+            key: strip_cache_control(item)
             for key, item in value.items()
             if key != "cache_control"
         }
     if isinstance(value, list):
-        return [_strip_cache_control(item) for item in value]
+        return [strip_cache_control(item) for item in value]
     return value

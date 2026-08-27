@@ -14,6 +14,7 @@ riscrivere le applicazioni:
 |---|---|
 | `POST /v1/chat/completions` | applicazioni che parlano il protocollo OpenAI: si cambia `base_url` e basta |
 | `POST /v1/messages` | client che parlano già il dialetto nativo di Claude |
+| `POST /v1/messages/count_tokens` | preventivare il costo di una richiesta senza generarla |
 
 ```
 la tua app  ──►  EcoTokens  ──►  API Anthropic  ──►  Claude
@@ -191,6 +192,31 @@ in dialetto OpenAI.
 Il corpo non viene validato campo per campo di proposito: riprodurre lo schema
 Anthropic qui dentro significherebbe mantenerne una copia che invecchia, e
 rifiutare parametri che l'API magari accetta già.
+
+#### Preventivare senza generare
+
+```bash
+curl http://localhost:8000/v1/messages/count_tokens -H "Content-Type: application/json"   -d '{"model":"claude-opus-5","messages":[{"role":"user","content":"ciao"}]}'
+```
+
+Un client nativo che vuole sapere quanto costerà una richiesta chiama questo
+endpoint. Conta la richiesta **come è arrivata**, dopo la sola sanificazione —
+non dopo gli stadi che riscrivono il prompt, perché quelli hanno effetti
+collaterali che un preventivo non deve produrre: creerebbero sessioni,
+scriverebbero riassunti, chiamerebbero modelli. Il numero è quindi il costo del
+prompt *che hai scritto*; quello che il gateway manda davvero è di solito più
+corto, ed è il punto.
+
+La risposta porta anche la stima locale accanto al conteggio vero:
+
+```json
+{"input_tokens": 1234,
+ "ecotokens": {"estimated_input_tokens": 1301, "estimate_error_ratio": 0.0543}}
+```
+
+Non serve al chiamante, serve al progetto. Tutto quello che c'è in questo README
+poggia su uno stimatore euristico mai tarato contro il tokenizer reale, e ogni
+chiamata a questo endpoint è un punto di taratura gratuito.
 
 *Non provato:* in teoria un client nativo configurabile via `ANTHROPIC_BASE_URL`
 potrebbe passare dal gateway. Non l'ho verificato con nessuno in particolare.

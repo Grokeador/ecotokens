@@ -1,0 +1,12 @@
+# Nel repository i file di testo restano LF, su qualunque sistema operativo.
+# Senza questo, `core.autocrlf` di Windows converte in CRLF al checkout: il
+# progetto continua a funzionare, ma chi lo apre su Linux o macOS vede diff
+# fantasma su file che nessuno ha toccato.
+* text=auto eol=lf
+
+# File dove la fine riga non va normalizzata.
+*.png binary
+*.jpg binary
+*.ico binary
+*.db binary
+*.sqlite binary
