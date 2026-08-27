@@ -57,6 +57,25 @@ enabled = true
 # sono quasi sempre la voce di spesa piu' grossa.
 clear_tool_uses = true
 clear_thinking = false
+# Risultati recenti che restano sempre interi.
+prune_keep_tool_uses = 3
+# Ogni quanti TURNI il confine di potatura puo' avanzare. Lasciando `keep` al
+# valore predefinito del server il confine scorre a ogni turno e l'insieme dei
+# blocchi svuotati cambia sempre: prefisso nuovo a ogni richiesta, cache mai
+# riletta. Misurato: da -36,2% a +7,8% sul carico di costruzione.
+# L'unita' e' il turno e non il risultato perche' sei chiamate per turno
+# consumano uno scatto sei volte piu' in fretta di una.
+prune_step_turns = 4
+# Materiale potabile oltre il quale si pota anche senza pressione sulla
+# finestra. Misurato: 20.000 e' il minimo, e a 50.000 potare costa PIU' del non
+# potare (comincia troppo tardi e sposta il prefisso quando la cache valeva di
+# piu'). Attenzione: sotto questa soglia si scambiano soldi misurati contro
+# fedelta' che il banco non misura. Alzarlo molto disattiva la potatura.
+prune_min_prunable_tokens = 20000
+# Guadagno minimo perche' il server tocchi il contesto. 0 = nessuna soglia.
+prune_clear_at_least_tokens = 0
+# Tool i cui risultati non vanno mai svuotati.
+prune_exclude_tools = []
 trigger_ratio = 0.6
 hard_ratio = 0.85
 local_compaction = true

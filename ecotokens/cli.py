@@ -640,6 +640,45 @@ def overhead() -> None:
 
 
 @app.command()
+def pruning(
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Confronta le strategie di potatura del contesto."""
+    if live:
+        esigi_credenziali()
+    from .bench import measure_pruning
+
+    esiti = asyncio.run(measure_pruning(live=live, project_root=Path.cwd()))
+
+    tabella = Table(title="Potatura del contesto: dove sta il confine")
+    tabella.add_column("Carico")
+    tabella.add_column("Strategia")
+    tabella.add_column("Costo", justify="right")
+    tabella.add_column("Da cache", justify="right")
+    tabella.add_column("vs nessuna potatura", justify="right")
+    scorso = None
+    for voce in esiti:
+        if scorso is not None and voce.scenario != scorso:
+            tabella.add_section()
+        scorso = voce.scenario
+        stile = "green" if voce.delta_ratio > 0.001 else "red" if voce.delta_ratio < -0.001 else "dim"
+        tabella.add_row(
+            voce.scenario,
+            voce.name,
+            f"${voce.cost_usd:.4f}",
+            f"{voce.cache_ratio * 100:.1f}%",
+            f"[{stile}]{voce.delta_ratio * 100:+.1f}%[/]",
+        )
+    console.print(tabella)
+    console.print()
+    console.print(
+        "[dim]Lo scatto si misura in turni, non in risultati: sei chiamate per turno "
+        "ne consumano sei volte piu' in fretta di una.[/]"
+    )
+
+
+
+@app.command()
 def dashboard(
     config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
     out: str = typer.Option("ecotokens-dashboard.html", help="File HTML da generare"),

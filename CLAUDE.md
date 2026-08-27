@@ -95,7 +95,7 @@ Protocollo, quando si trova qualcosa:
 ## Comandi
 
 `serve` `stats` `purge` · misure: `bench` `ablate` `optimize` `compaction`
-`prompt` `substitutions` `cachekey` `overhead` `dashboard`
+`prompt` `substitutions` `cachekey` `overhead` `pruning` `dashboard`
 
 Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
 devono mai richiedere rete.

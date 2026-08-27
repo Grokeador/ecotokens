@@ -89,7 +89,14 @@ class ContextStage(BaseStage):
         ctx.estimated_prompt_tokens = estimated
         ratio = estimated / window if window else 0.0
 
-        if ratio < self.config.trigger_ratio:
+        # Due condizioni indipendenti, perche' rispondono a due domande diverse.
+        # La frazione della finestra risponde a "sono in pericolo di sforare".
+        # La quantita' di materiale potabile risponde a "conviene potare", che
+        # non dipende dalla finestra del modello - e le finestre vanno da 200k a
+        # un milione, quindi la stessa frazione significa cose molto diverse.
+        in_pericolo = ratio >= self.config.trigger_ratio
+        conviene = self._prunable_tokens(ctx) >= self.config.prune_min_prunable_tokens
+        if not (in_pericolo or conviene):
             return
 
         self._apply_server_pruning(ctx, estimated, window)
@@ -102,7 +109,7 @@ class ContextStage(BaseStage):
     def _apply_server_pruning(self, ctx: RequestContext, estimated: int, window: int) -> None:
         edits: list[dict[str, Any]] = []
         if self.config.clear_tool_uses:
-            edits.append({"type": "clear_tool_uses_20250919"})
+            edits.append(self._clear_tool_uses_edit(ctx))
         if self.config.clear_thinking:
             edits.append({"type": "clear_thinking_20251015"})
         if not edits:
@@ -114,6 +121,81 @@ class ContextStage(BaseStage):
             f"potatura lato server attiva: prompt stimato {estimated} token su "
             f"{window} di finestra"
         )
+
+    def _prunable_tokens(self, ctx: RequestContext) -> int:
+        """Token di risultati di tool che si potrebbero svuotare.
+
+        E' la misura di quanto la potatura *renderebbe*, indipendente dalla
+        finestra del modello. Conta solo cio' che sta oltre i risultati recenti
+        conservati: quelli non si toccano mai.
+        """
+        blocchi = [
+            blocco
+            for messaggio in (ctx.params.get("messages") or [])
+            for blocco in (messaggio.get("content") or [])
+            if isinstance(blocco, dict) and blocco.get("type") == "tool_result"
+        ]
+        potabili = blocchi[: max(0, len(blocchi) - max(0, self.config.prune_keep_tool_uses))]
+        return sum(estimate_content_tokens(blocco.get("content")) for blocco in potabili)
+
+    def _clear_tool_uses_edit(self, ctx: RequestContext) -> dict[str, Any]:
+        """Costruisce l'edit, decidendo *quanti* risultati conservare.
+
+        Il parametro ``keep`` dello schema ufficiale dice quanti risultati
+        recenti restano interi. Lasciarlo al valore predefinito del server
+        sembra la scelta neutra e invece e' quella che rompe la cache: con un
+        ``keep`` fisso il confine di potatura sta sempre a N dal fondo, quindi
+        si sposta in avanti di un risultato a ogni turno, e l'insieme dei
+        blocchi svuotati e' diverso a ogni richiesta. Il prefisso cambia
+        sempre, e la cache non trova mai niente.
+
+        Qui si ragiona al contrario: si sceglie **quanti potarne dall'inizio**,
+        a scatti, e da quello si ricava ``keep``. Fra uno scatto e l'altro
+        vengono svuotati esattamente gli stessi blocchi, quindi il prefisso
+        resta fermo e la cache regge. E' la stessa correzione gia' applicata al
+        punto di taglio della compattazione, tradotta in un parametro dell'API.
+        """
+        edit: dict[str, Any] = {"type": "clear_tool_uses_20250919"}
+
+        totale = _conta_tool_result(ctx.params.get("messages") or [])
+        minimo = max(0, self.config.prune_keep_tool_uses)
+        if totale <= minimo:
+            return edit
+
+        # Lo scatto si misura in *turni*, non in risultati, ed e' la differenza
+        # fra funzionare e non funzionare. Un ciclo agentico con sei chiamate
+        # per turno e uno che ne fa una consumano lo stesso scatto a velocita'
+        # diverse di sei volte: contato in risultati, lo stesso numero produce
+        # otto turni di stabilita' in un caso e nemmeno due nell'altro.
+        # Misurato: contato in risultati i due carichi vogliono valori opposti,
+        # contato in turni ne vogliono uno solo.
+        per_turno = totale / max(1, ctx.history_turns)
+        step = max(1, round(per_turno * self.config.prune_step_turns))
+        potabili = totale - minimo
+        potati = (potabili // step) * step
+        if potati <= 0:
+            # Non c'e' ancora abbastanza materiale per uno scatto intero: si
+            # lascia il contesto intatto invece di potare una sfoglia e
+            # buttare via la cache per pochi token.
+            ctx.note(
+                f"potatura rinviata: {potabili} risultati potabili, meno di uno "
+                f"scatto da {step} ({self.config.prune_step_turns} turni)"
+            )
+            return edit | {"keep": {"type": "tool_uses", "value": totale}}
+
+        edit["keep"] = {"type": "tool_uses", "value": totale - potati}
+        if self.config.prune_clear_at_least_tokens:
+            edit["clear_at_least"] = {
+                "type": "input_tokens",
+                "value": self.config.prune_clear_at_least_tokens,
+            }
+        if self.config.prune_exclude_tools:
+            edit["exclude_tools"] = list(self.config.prune_exclude_tools)
+        ctx.note(
+            f"potatura a scatti: {potati} risultati svuotati su {totale}, "
+            f"gli stessi per i prossimi {self.config.prune_step_turns} turni"
+        )
+        return edit
 
     # -- riassunto locale --------------------------------------------------
 
@@ -353,4 +435,14 @@ def _has_orphan_tool_result(tail: list[dict[str, Any]]) -> bool:
         return False
     return any(
         isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+    )
+
+
+def _conta_tool_result(messaggi: list[dict[str, Any]]) -> int:
+    """Quanti risultati di tool ci sono nella conversazione."""
+    return sum(
+        1
+        for messaggio in messaggi
+        for blocco in (messaggio.get("content") or [])
+        if isinstance(blocco, dict) and blocco.get("type") == "tool_result"
     )

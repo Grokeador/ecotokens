@@ -94,6 +94,30 @@ class ContextSettings(BaseModel):
     # sforare la finestra.
     clear_tool_uses: bool = True
     clear_thinking: bool = False
+    # Risultati recenti che restano sempre interi.
+    prune_keep_tool_uses: int = 3
+    # Ogni quanti TURNI il confine di potatura puo' avanzare. E' la regola che
+    # decide se potare aiuta o costa: lasciando `keep` al valore predefinito del
+    # server il confine sta sempre a N dal fondo, quindi scorre a ogni turno e
+    # l'insieme dei blocchi svuotati cambia sempre - prefisso nuovo a ogni
+    # richiesta, cache mai riletta.
+    #
+    # L'unita' e' il turno e non il risultato, e non e' un dettaglio: un ciclo
+    # agentico con sei chiamate per turno e uno che ne fa una consumano lo
+    # stesso numero di risultati a velocita' diverse di sei volte. Misurato,
+    # contando in risultati i due carichi volevano valori opposti; contando in
+    # turni ne vogliono uno solo.
+    prune_step_turns: int = 4
+    # Materiale potabile oltre il quale si pota anche se la finestra non e'
+    # sotto pressione. Risponde a "conviene", mentre `trigger_ratio` risponde a
+    # "sono in pericolo": due domande diverse, che meritano due condizioni.
+    # Una frazione della finestra non e' un buon metro per la prima, visto che
+    # le finestre vanno da 200k a un milione di token.
+    prune_min_prunable_tokens: int = 20_000
+    # Guadagno minimo perche' il server tocchi il contesto. 0 = nessuna soglia.
+    prune_clear_at_least_tokens: int = 0
+    # Tool i cui risultati non vanno mai svuotati.
+    prune_exclude_tools: list[str] = Field(default_factory=list)
     # Frazione della finestra del modello oltre la quale si pota.
     trigger_ratio: float = 0.6
     # Oltre questa frazione la potatura non basta e si riassume la parte

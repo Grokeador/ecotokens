@@ -58,13 +58,100 @@ class StubState:
 LOOKBACK_BLOCKS = 20
 
 
-# Quante coppie tool_use/tool_result restano intatte quando la potatura del
-# contesto e' attiva. **E' un modello dichiarato**: la strategia vera
-# ``clear_tool_uses_20250919`` conserva un certo numero di risultati recenti, e
-# il valore esatto va verificato con `--live`.
+# Valore predefinito di ``keep`` quando la richiesta non lo specifica. **E' un
+# modello dichiarato**: la strategia vera ``clear_tool_uses_20250919`` conserva
+# un certo numero di risultati recenti, e il valore esatto va verificato con
+# `--live`. Serve un default perche' senza di esso l'edit non potato sarebbe
+# indistinguibile da un edit assente.
 KEPT_TOOL_RESULTS = 3
 
 CLEARED_PLACEHOLDER = {"type": "text", "text": "[risultato rimosso dal contesto]"}
+
+
+def _valore(parametro: Any) -> int | None:
+    if isinstance(parametro, dict) and isinstance(parametro.get("value"), int):
+        return parametro["value"]
+    return None
+
+
+def _conta_tool_result(messaggi: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for messaggio in messaggi
+        for blocco in (messaggio.get("content") or [])
+        if isinstance(blocco, dict) and blocco.get("type") == "tool_result"
+    )
+
+
+def _peso(oggetto: Any) -> int:
+    return max(0, len(json.dumps(oggetto, default=str)) // 4)
+
+
+def _clear_tool_uses(
+    messaggi: list[dict[str, Any]], edit: dict[str, Any], token_totali: int
+) -> list[dict[str, Any]]:
+    """Modello dichiarato di ``clear_tool_uses_20250919``.
+
+    I tre parametri sono quelli dello schema ufficiale dell'SDK, non inventati
+    qui: ``trigger`` decide quando la strategia entra in gioco, ``keep`` quanti
+    risultati recenti restano interi, ``clear_at_least`` impone un guadagno
+    minimo sotto il quale non si tocca nulla.
+
+    Il comportamento e' ricostruito dalla documentazione, non osservato: va
+    confermato con `--live` prima di dedurne qualcosa di definitivo.
+    """
+    totale_risultati = _conta_tool_result(messaggi)
+
+    trigger = edit.get("trigger")
+    if isinstance(trigger, dict):
+        soglia = _valore(trigger)
+        if soglia is not None:
+            misura = token_totali if trigger.get("type") == "input_tokens" else totale_risultati
+            if misura < soglia:
+                return messaggi
+
+    keep = _valore(edit.get("keep"))
+    if keep is None:
+        keep = KEPT_TOOL_RESULTS
+    keep = max(0, keep)
+
+    esclusi = set(edit.get("exclude_tools") or [])
+
+    # Prima passata a vuoto: quanto si guadagnerebbe davvero.
+    visti = 0
+    risparmio = 0
+    for messaggio in reversed(messaggi):
+        for blocco in reversed(messaggio.get("content") or []):
+            if isinstance(blocco, dict) and blocco.get("type") == "tool_result":
+                visti += 1
+                if visti > keep and blocco.get("name") not in esclusi:
+                    risparmio += _peso(blocco.get("content")) - _peso(
+                        [dict(CLEARED_PLACEHOLDER)]
+                    )
+
+    minimo = _valore(edit.get("clear_at_least"))
+    if minimo is not None and risparmio < minimo:
+        # "Context will only be modified if at least this many tokens can be
+        # removed": sotto la soglia la richiesta resta integrale.
+        return messaggi
+
+    visti = 0
+    potati = []
+    for messaggio in reversed(messaggi):
+        contenuto = messaggio.get("content")
+        if not isinstance(contenuto, list):
+            potati.append(messaggio)
+            continue
+        nuovo = []
+        for blocco in reversed(contenuto):
+            if isinstance(blocco, dict) and blocco.get("type") == "tool_result":
+                visti += 1
+                if visti > keep and blocco.get("name") not in esclusi:
+                    blocco = {**blocco, "content": [dict(CLEARED_PLACEHOLDER)]}
+            nuovo.append(blocco)
+        messaggio["content"] = list(reversed(nuovo))
+        potati.append(messaggio)
+    return list(reversed(potati))
 
 
 def _apply_context_edits(payload: dict[str, Any]) -> dict[str, Any]:
@@ -76,37 +163,25 @@ def _apply_context_edits(payload: dict[str, Any]) -> dict[str, Any]:
     difetto del banco di misura, non per un suo difetto.
     """
     edits = (payload.get("context_management") or {}).get("edits") or []
-    tipi = {edit.get("type") for edit in edits if isinstance(edit, dict)}
-    if not tipi:
+    edits = [edit for edit in edits if isinstance(edit, dict)]
+    if not edits:
         return payload
 
     messaggi = [dict(messaggio) for messaggio in payload.get("messages") or []]
+    token_totali = _peso(payload)
 
-    if "clear_tool_uses_20250919" in tipi:
-        # Si contano i risultati dal fondo: i piu' recenti restano interi.
-        visti = 0
-        for messaggio in reversed(messaggi):
-            contenuto = messaggio.get("content")
-            if not isinstance(contenuto, list):
-                continue
-            nuovo = []
-            for blocco in contenuto:
-                if isinstance(blocco, dict) and blocco.get("type") == "tool_result":
-                    visti += 1
-                    if visti > KEPT_TOOL_RESULTS:
-                        blocco = {**blocco, "content": [dict(CLEARED_PLACEHOLDER)]}
-                nuovo.append(blocco)
-            messaggio["content"] = nuovo
-
-    if "clear_thinking_20251015" in tipi:
-        for messaggio in messaggi:
-            contenuto = messaggio.get("content")
-            if isinstance(contenuto, list):
-                messaggio["content"] = [
-                    blocco
-                    for blocco in contenuto
-                    if not (isinstance(blocco, dict) and blocco.get("type") == "thinking")
-                ]
+    for edit in edits:
+        if edit.get("type") == "clear_tool_uses_20250919":
+            messaggi = _clear_tool_uses(messaggi, edit, token_totali)
+        elif edit.get("type") == "clear_thinking_20251015":
+            for messaggio in messaggi:
+                contenuto = messaggio.get("content")
+                if isinstance(contenuto, list):
+                    messaggio["content"] = [
+                        blocco
+                        for blocco in contenuto
+                        if not (isinstance(blocco, dict) and blocco.get("type") == "thinking")
+                    ]
 
     return {**payload, "messages": messaggi}
 

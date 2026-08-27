@@ -284,4 +284,79 @@ TUNING_LOG: list[TuningEntry] = [
             "cambio di modello, dove sbagliare non si paga in token ma in tentativi."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="La potatura del contesto lasciava il confine al valore predefinito del server",
+        finding=(
+            "Lo stadio valeva 0% nell'ablazione, e la spiegazione accettata era che la soglia "
+            "lo tenesse spento di proposito perche' potare distrugge il prompt caching. Vero, "
+            "ma non inevitabile: l'edit `clear_tool_uses_20250919` accetta un parametro `keep` "
+            "che il gateway non usava affatto. Con `keep` fisso il confine sta sempre a N dal "
+            "fondo, quindi scorre di un risultato a ogni turno e l'insieme dei blocchi svuotati "
+            "cambia sempre. Il prefisso e' nuovo a ogni richiesta per costruzione."
+        ),
+        effect=(
+            "Ora il gateway sceglie quanti risultati potare dall'inizio, a scatti, e da quello "
+            "ricava `keep`: fra uno scatto e l'altro vengono svuotati esattamente gli stessi "
+            "blocchi. Sul carico di costruzione la potatura passa da -36,2% a +7,8%, con la "
+            "quota di prompt da cache dal 21% all'83%. E' la stessa correzione gia' applicata "
+            "al punto di taglio della compattazione, tradotta in un parametro dell'API."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Lo scatto della potatura andava misurato in turni, non in risultati",
+        finding=(
+            "Con lo scatto contato in risultati i due carichi agentici volevano valori "
+            "opposti: il ciclo con sei chiamate per turno preferiva il confine mobile (+10,7%), "
+            "quello con una chiamata per turno lo detestava (-36,2%). Non era una differenza di "
+            "quanto pesano i tool result - la quota e' identica, 92% contro 93% - ma di "
+            "*velocita'*: sei risultati per turno consumano uno scatto sei volte piu' in "
+            "fretta, quindi lo stesso numero produce otto turni di stabilita' in un caso e "
+            "nemmeno due nell'altro."
+        ),
+        effect=(
+            "Lo scatto e' espresso in turni e convertito in risultati usando il ritmo osservato "
+            "della conversazione. Con la stessa impostazione il confine si muove circa una "
+            "volta ogni N turni su entrambi i carichi, e entrambi risparmiano. Lo stadio passa "
+            "da 0% a 1,2% del risparmio complessivo."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="La soglia di potatura rispondeva alla domanda sbagliata",
+        finding=(
+            "`trigger_ratio` e' una frazione della finestra del modello, e risponde a 'sono in "
+            "pericolo di sforare'. Non risponde a 'conviene potare', che dipende da quanto "
+            "materiale vecchio c'e' e non dalla finestra - e le finestre vanno da 200k a un "
+            "milione di token, quindi la stessa frazione significa cose molto diverse. "
+            "Misurando la soglia sul materiale potabile e' emersa una zona non monotona: a "
+            "50.000 token la potatura costa PIU' del non potare affatto, perche' comincia "
+            "troppo tardi e sposta il prefisso proprio quando la cache valeva di piu'."
+        ),
+        effect=(
+            "Due condizioni indipendenti: `trigger_ratio` resta la guardia contro l'overflow, "
+            "`prune_min_prunable_tokens` decide la convenienza. Misurato il minimo a 20.000 "
+            "token di materiale potabile: -4,2% sul corpus completo. Va detto che sotto quella "
+            "soglia si scambiano soldi misurati contro fedelta' che il banco non misura - "
+            "quel contesto prima restava integrale."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Il simulatore ignorava i parametri di clear_tool_uses",
+        finding=(
+            "L'edit veniva applicato sempre e con un numero fisso di risultati conservati. "
+            "Qualunque uso di `keep`, `trigger`, `clear_at_least` o `exclude_tools` era "
+            "invisibile alla misura, quindi nessuna strategia di potatura era distinguibile "
+            "da un'altra."
+        ),
+        effect=(
+            "Implementati i quattro parametri secondo lo schema ufficiale dell'SDK, non "
+            "inventati. Resta un modello dichiarato, ricostruito dalla documentazione e non "
+            "osservato: va confermato con `--live` prima di dedurne qualcosa di definitivo. "
+            "Senza questa correzione l'intera ottimizzazione della potatura non sarebbe stata "
+            "misurabile."
+        ),
+    ),
 ]

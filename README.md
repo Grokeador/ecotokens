@@ -46,7 +46,7 @@ stadi di ottimizzazione (vedi [Misurare, invece di credere](#misurare-invece-di-
 |---|---|---|
 | **Prompt caching automatico** | fino al 90% sui token di prefisso riletti | nessuno |
 | **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno al default |
-| **Potatura del contesto** | difesa contro l'overflow, non un risparmio | può azzerare il caching |
+| **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
 | **Riscrittura del prompt** | −11% su prompt scritti in modo prolisso, 0,2% sul corpus completo | cambia il testo, non il senso |
 | **Cache esatta** | richieste identiche servite a costo zero; **−56%** quando differiscono solo per spaziatura | nessuno |
@@ -155,8 +155,8 @@ repository:
 | ciclo agentico, 6 turni da 6 tool | $0,6249 | $0,3195 | **49%** | 73% |
 | domande frequenti ripetute | $0,3779 | $0,0509 | **86%** | 73% |
 | prompt verbosi, 8 turni | $0,3338 | $0,1855 | **44%** | 82% |
-| costruzione di EcoTokens | $3,8321 | $0,9980 | **74%** | 90% |
-| **totale** | **$5,6045** | **$1,6823** | **70%** | 87% |
+| costruzione di EcoTokens | $4,4011 | $0,9796 | **78%** | 72% |
+| **totale** | **$6,1735** | **$1,6304** | **74%** | 72% |
 
 Lo scenario `costruzione` non è inventato: legge i sorgenti veri del progetto e
 ricostruisce il traffico che un agente di codice produce scrivendolo.
@@ -228,24 +228,72 @@ precedente è il contributo di quello stadio.
 
 | Stadio | Contributo |
 |---|---:|
-| prompt caching | **66,3%** |
-| effort adattivo | 3,5% |
-| cache esatta | 2,3% |
+| prompt caching | **66,6%** |
+| effort adattivo | 3,4% |
+| cache esatta | 2,2% |
+| potatura del contesto | 1,2% |
 | riscrittura del prompt | 0,2% |
-| potatura del contesto | 0% (non interviene mai con la soglia predefinita) |
 
-### Due ottimizzazioni che litigano
+### Potare senza distruggere la cache
 
-Potare i vecchi risultati dei tool toglie token dal prompt, ma sposta il confine
-di taglio a ogni turno: il prefisso cambia e il prompt caching salta. Misurato:
+Potare i vecchi risultati dei tool toglie token dal prompt. Per molto tempo qui
+è costato più di quanto rendesse, e lo stadio valeva **0%**: la spiegazione
+accettata era che potare e mettere in cache siano incompatibili.
 
-| Carico | Solo caching | Caching + potatura | Effetto |
-|---|---:|---:|---:|
-| ciclo agentico | $0,3233 (72% da cache) | $0,2888 (40% da cache) | **+11%** |
-| costruzione | $0,8183 (90% da cache) | $1,1196 (21% da cache) | **−37%** |
+Non lo sono. L'edit `clear_tool_uses_20250919` accetta un parametro `keep` che
+il gateway non usava affatto, lasciandolo al valore predefinito del server. Con
+`keep` fisso il confine sta sempre a N risultati dal fondo, quindi **scorre di
+un risultato a ogni turno**: l'insieme dei blocchi svuotati è diverso a ogni
+richiesta, il prefisso è nuovo per costruzione, e la cache non trova mai niente.
 
-Per questo la potatura resta una difesa contro l'esaurimento della finestra di
-contesto, non un modo per risparmiare, e la sua soglia resta alta.
+Ora il gateway sceglie quanti risultati potare *dall'inizio*, a scatti, e da
+quello ricava `keep`. Fra uno scatto e l'altro vengono svuotati esattamente gli
+stessi blocchi.
+
+| Carico di costruzione | Costo | Da cache |
+|---|---:|---:|
+| nessuna potatura | $1,0936 | 90% |
+| confine mobile (com'era) | $1,4898 | 21% |
+| **a scatti** | **$1,0087** | **83%** |
+
+Da −36,2% a **+7,8%**.
+
+#### Lo scatto si misura in turni, non in risultati
+
+Contato in risultati, i due carichi agentici volevano valori opposti. Non per
+quanto pesano i tool result — la quota è identica, 92% contro 93% — ma per la
+*velocità*: sei chiamate per turno consumano uno scatto sei volte più in fretta
+di una. Lo stesso numero dava otto turni di stabilità su un carico e nemmeno due
+sull'altro, cioè il confine tornava a inseguire.
+
+Espresso in turni e convertito col ritmo osservato della conversazione, il
+confine si muove circa una volta ogni N turni su entrambi, ed entrambi
+risparmiano.
+
+#### Due soglie, perché sono due domande
+
+`trigger_ratio` è una frazione della finestra del modello e risponde a *sono in
+pericolo di sforare*. Non risponde a *conviene potare*, che dipende da quanto
+materiale vecchio c'è — e le finestre vanno da 200k a un milione di token,
+quindi la stessa frazione significa cose molto diverse.
+
+Misurando la soglia sul materiale potabile è emersa una zona non monotona:
+
+| Materiale minimo | Costo totale |
+|---|---:|
+| mai (potatura spenta) | $1,6858 |
+| 50.000 token | **$1,7534** |
+| 30.000 token | $1,6209 |
+| **20.000 token** | **$1,6146** |
+| 10.000 token | $1,6151 |
+
+A 50.000 potare costa **più che non potare affatto**: comincia troppo tardi e
+sposta il prefisso proprio quando la cache valeva di più.
+
+Va detto chiaramente: sotto quella soglia si scambiano soldi misurati contro
+fedeltà che il banco non misura. Quel contesto prima restava integrale, ora i
+risultati di tool vecchi diventano un segnaposto. È `prune_min_prunable_tokens`,
+e alzarlo lo disattiva.
 
 ### Comprimere la cronologia: conviene solo a una condizione
 
@@ -449,7 +497,7 @@ quando esiste lo scenario dei prompt verbosi).
 ### Cosa è cambiato misurando
 
 Il registro completo è in [tuning_log.py](ecotokens/tuning_log.py). In sintesi,
-sette difetti del *metro* e otto del *gateway*:
+otto difetti del *metro* e undici del *gateway*:
 
 - Il marker `cache_control` finiva dentro l'impronta del prefisso del
   simulatore. La misura dava il gateway per dannoso (+6,6% di costo); corretta
@@ -603,6 +651,7 @@ poi la cache venga davvero letta.
 | `ecotokens substitutions` | verifica quali sinonimi costano davvero meno token |
 | `ecotokens cachekey` | misura l'effetto della normalizzazione sulla chiave di cache |
 | `ecotokens overhead` | mostra il testo che il gateway aggiunge ai prompt |
+| `ecotokens pruning` | confronta le strategie di potatura del contesto |
 | `ecotokens dashboard` | genera la dashboard HTML |
 
 ## Endpoint

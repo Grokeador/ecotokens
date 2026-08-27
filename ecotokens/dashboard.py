@@ -29,7 +29,7 @@ from .bench import (
     measure_cache_key,
     measure_compaction,
     measure_prompt_optimization,
-    measure_pruning_interaction,
+    measure_pruning,
     open_results_store,
     run_ablation,
     run_benchmark,
@@ -135,16 +135,13 @@ async def build_dashboard_data(
             dati["interactions"] = [
                 {
                     "scenario": voce.scenario,
-                    "baseline_name": voce.baseline_name,
-                    "variant_name": voce.variant_name,
-                    "baseline_cost": voce.baseline_cost,
-                    "variant_cost": voce.variant_cost,
-                    "baseline_cache_ratio": voce.baseline_cache_ratio,
-                    "variant_cache_ratio": voce.variant_cache_ratio,
+                    "name": voce.name,
+                    "description": voce.description,
+                    "cost_usd": voce.cost_usd,
+                    "cache_ratio": voce.cache_ratio,
                     "delta_ratio": voce.delta_ratio,
-                    "helps": voce.helps,
                 }
-                for voce in await measure_pruning_interaction(project_root=root)
+                for voce in await measure_pruning(project_root=root)
             ]
 
             compattazione = await measure_compaction()
@@ -544,43 +541,61 @@ def _stages(data: dict[str, Any]) -> str:
 
 
 def _interactions(data: dict[str, Any]) -> str:
-    interazioni = data.get("interactions") or []
-    if not interazioni:
+    """Le strategie di potatura del contesto, per carico."""
+    voci = data.get("interactions") or []
+    if not voci:
         return ""
-    schede = []
-    for voce in interazioni:
-        stato = "good" if voce["helps"] else "bad"
-        verdetto = "conviene" if voce["helps"] else "costa di piu'"
-        schede.append(
-            f"""<article class="interaction state-{stato}">
-      <header>
-        <h3>{_esc(voce['scenario'])}</h3>
-        <span class="pill pill-{stato} mono">{_fmt_pct(voce['delta_ratio'], segno=True)}</span>
-      </header>
-      <p class="verdict-line">Potare il contesto <strong>{_esc(verdetto)}</strong> su questo carico.</p>
-      <dl>
-        <div><dt>{_esc(voce['baseline_name'])}</dt>
-          <dd class="mono">{_fmt_usd(voce['baseline_cost'])}
-          <span class="muted">&middot; {_fmt_pct(voce['baseline_cache_ratio'])} da cache</span></dd></div>
-        <div><dt>{_esc(voce['variant_name'])}</dt>
-          <dd class="mono">{_fmt_usd(voce['variant_cost'])}
-          <span class="muted">&middot; {_fmt_pct(voce['variant_cache_ratio'])} da cache</span></dd></div>
-      </dl>
-    </article>"""
-        )
+
+    per_scenario: dict[str, list[dict[str, Any]]] = {}
+    for voce in voci:
+        per_scenario.setdefault(voce["scenario"], []).append(voce)
+
+    righe = []
+    for scenario, varianti in per_scenario.items():
+        for indice, voce in enumerate(varianti):
+            quota = voce["delta_ratio"]
+            stato = "good" if quota > 0.001 else "bad" if quota < -0.001 else "idle"
+            etichetta = (
+                f'<td class="stage-name" rowspan="{len(varianti)}">{_esc(scenario)}</td>'
+                if indice == 0
+                else ""
+            )
+            righe.append(
+                f"""<tr>
+      {etichetta}
+      <td>{_esc(voce['name'])}
+        <span class="note">{_esc(voce['description'])}</span></td>
+      <td class="num mono">{_fmt_usd(voce['cost_usd'])}</td>
+      <td class="num mono">{_fmt_pct(voce['cache_ratio'])}</td>
+      <td class="num"><span class="pill pill-{stato}">{_fmt_pct(quota, segno=True)}</span></td>
+    </tr>"""
+            )
 
     return f"""<section class="panel">
   <div class="panel-head">
-    <h2>Quando due ottimizzazioni litigano</h2>
-    <p>Potare i vecchi risultati dei tool toglie token dal prompt, ma sposta il
-    confine di taglio a ogni turno: il prefisso cambia e il prompt caching salta.
-    Se il saldo sia positivo dipende dal carico, e non si puo' dedurre &mdash; si
-    misura. Per questo la potatura resta una difesa contro l'esaurimento della
-    finestra di contesto, non un modo per risparmiare.</p>
+    <h2>Potare il contesto senza distruggere la cache</h2>
+    <p>Per molto tempo questa misura ha detto che potare i vecchi risultati dei tool e
+    mettere in cache sono incompatibili, e la conclusione sembrava definitiva. Non lo era:
+    mancava un parametro.</p>
+    <p>L'edit <code>clear_tool_uses_20250919</code> accetta <code>keep</code>, che il
+    gateway lasciava al valore predefinito del server. Con <code>keep</code> fisso il
+    confine di potatura sta sempre a N risultati dal fondo, quindi <strong>scorre di un
+    risultato a ogni turno</strong>: l'insieme dei blocchi svuotati è diverso a ogni
+    richiesta, il prefisso è nuovo per costruzione, e la cache non trova mai niente.
+    Scegliendo invece quanti potarne <em>dall'inizio</em>, a scatti, fra uno scatto e
+    l'altro vengono svuotati esattamente gli stessi blocchi.</p>
+    <p class="caveat">Lo scatto si misura in <strong>turni</strong>, non in risultati: sei
+    chiamate per turno ne consumano sei volte più in fretta di una, e contato in risultati
+    lo stesso valore faceva tornare il confine a inseguire su metà dei carichi.</p>
   </div>
-  <div class="interaction-grid">{''.join(schede)}</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Carico</th><th>Strategia</th><th class="num">Costo</th>
+      <th class="num">Da cache</th><th class="num">vs nessuna potatura</th></tr></thead>
+      <tbody>{''.join(righe)}</tbody>
+    </table>
+  </div>
 </section>"""
-
 
 def _compaction(data: dict[str, Any]) -> str:
     """Confronto fra le strategie di compattazione della cronologia.

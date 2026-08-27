@@ -491,78 +491,90 @@ async def run_sweep(
     return esiti, run
 
 
-# --- interazioni fra stadi ------------------------------------------------
+# --- potatura del contesto ------------------------------------------------
 
 
 @dataclass
-class Interaction:
-    """Effetto di uno stadio quando un altro e' gia' attivo.
-
-    Gli stadi non sono indipendenti, e questa e' la parte meno intuitiva del
-    progetto: potare il contesto sposta il confine di taglio a ogni turno,
-    quindi cambia il prefisso e puo' distruggere una cache che stava
-    funzionando. Se conviene o no dipende dal carico, e l'unico modo di saperlo
-    e' misurarlo su quel carico.
-    """
+class PruningVariant:
+    """Una strategia di potatura del contesto messa alla prova."""
 
     scenario: str
-    baseline_name: str
-    variant_name: str
-    baseline_cost: float
-    variant_cost: float
-    baseline_cache_ratio: float
-    variant_cache_ratio: float
-
-    @property
-    def delta_usd(self) -> float:
-        return self.baseline_cost - self.variant_cost
-
-    @property
-    def delta_ratio(self) -> float:
-        return self.delta_usd / self.baseline_cost if self.baseline_cost else 0.0
-
-    @property
-    def helps(self) -> bool:
-        return self.delta_usd > 0
+    name: str
+    description: str
+    cost_usd: float
+    cache_ratio: float
+    delta_ratio: float
 
 
-async def measure_pruning_interaction(
+async def measure_pruning(
     *, live: bool = False, project_root: Path | None = None
-) -> list[Interaction]:
-    """Misura cosa succede alla cache quando si pota il contesto."""
+) -> list[PruningVariant]:
+    """Confronta le strategie di potatura sui carichi con molti tool result.
+
+    Per molto tempo questa misura ha detto che potare e mettere in cache sono
+    incompatibili, e la conclusione sembrava definitiva. Non lo era: mancava un
+    parametro. L'edit ``clear_tool_uses_20250919`` accetta ``keep``, che il
+    gateway lasciava al valore predefinito del server - e con ``keep`` fisso il
+    confine di potatura scorre di un risultato a ogni turno, quindi l'insieme
+    dei blocchi svuotati e' diverso a ogni richiesta e il prefisso e' nuovo per
+    costruzione.
+
+    Le tre varianti isolano esattamente quel punto.
+    """
     from .workloads import scenario_agente, scenario_costruzione
 
     root = project_root or Path.cwd()
     scenari = [scenario_agente(), scenario_costruzione(root)]
 
-    def solo_cache(settings: Settings) -> None:
-        _abilita_cache_planner(settings)
-
-    def cache_piu_potatura(settings: Settings) -> None:
+    def _potatura(settings: Settings, **modifiche: Any) -> None:
         _abilita_cache_planner(settings)
         settings.context.enabled = True
-        # Soglia bassa apposta: serve a far scattare la potatura, che con la
-        # soglia predefinita non interverrebbe mai su questi carichi.
+        # Soglie abbassate apposta: qui interessa il confronto fra strategie,
+        # non se la potatura scatti con i valori predefiniti.
         settings.context.trigger_ratio = 0.02
         settings.context.local_compaction = False
+        for chiave, valore in modifiche.items():
+            setattr(settings.context, chiave, valore)
 
-    esiti: list[Interaction] = []
+    varianti: list[tuple[str, str, Callable[[Settings], None]]] = [
+        (
+            "nessuna potatura",
+            "il contesto resta integrale",
+            _abilita_cache_planner,
+        ),
+        (
+            "confine mobile",
+            "keep fisso: il confine scorre a ogni turno",
+            lambda s: _potatura(s, prune_step_turns=0),
+        ),
+        (
+            "confine a scatti",
+            "gli stessi blocchi restano svuotati per piu' turni",
+            lambda s: _potatura(s),
+        ),
+    ]
+
+    esiti: list[PruningVariant] = []
     for scenario in scenari:
-        base = await _run_scenario(scenario, make_settings(solo_cache), "cache", live=live)
-        potato = await _run_scenario(
-            scenario, make_settings(cache_piu_potatura), "cache+potatura", live=live
-        )
-        esiti.append(
-            Interaction(
-                scenario=scenario.name,
-                baseline_name="solo prompt caching",
-                variant_name="caching + potatura",
-                baseline_cost=base.cost_usd,
-                variant_cost=potato.cost_usd,
-                baseline_cache_ratio=base.cache_ratio,
-                variant_cache_ratio=potato.cache_ratio,
+        riferimento = None
+        for nome, descrizione, applica in varianti:
+            misura = await _run_scenario(
+                scenario, make_settings(applica), nome, live=live
             )
-        )
+            if riferimento is None:
+                riferimento = misura.cost_usd
+            esiti.append(
+                PruningVariant(
+                    scenario=scenario.name,
+                    name=nome,
+                    description=descrizione,
+                    cost_usd=misura.cost_usd,
+                    cache_ratio=misura.cache_ratio,
+                    delta_ratio=(riferimento - misura.cost_usd) / riferimento
+                    if riferimento
+                    else 0.0,
+                )
+            )
     return esiti
 
 
