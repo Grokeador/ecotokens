@@ -54,6 +54,10 @@ class Measurement:
     cache_write_tokens: int = 0
     full_price_tokens: int = 0
     cost_usd: float = 0.0
+    # Quota di `cost_usd` spesa dalle chiamate che il gateway fa per conto
+    # proprio (il riassunto di compattazione). Tenuta separata perche' e' il
+    # prezzo dell'ottimizzazione, non della richiesta dell'utente.
+    aux_cost_usd: float = 0.0
     latency_ms: float = 0.0
     notes: list[str] = field(default_factory=list)
 
@@ -106,11 +110,17 @@ class BenchRun:
             aggregato.cache_write_tokens += misura.cache_write_tokens
             aggregato.full_price_tokens += misura.full_price_tokens
             aggregato.cost_usd += misura.cost_usd
+            aggregato.aux_cost_usd += misura.aux_cost_usd
             aggregato.latency_ms += misura.latency_ms
         return aggregato
 
 
 # --- varianti di configurazione ------------------------------------------
+
+# Versione del corpus di scenari. Cambia quando si aggiunge o si toglie uno
+# scenario: i numeri di due corpus diversi non sono confrontabili, e la
+# sezione dei progressi deve poterlo sapere invece di sommare mele e pere.
+CORPUS_VERSION = "v2"
 
 BASELINE_VARIANT = "senza-gateway"
 FULL_VARIANT = "con-gateway"
@@ -121,6 +131,7 @@ def _spegni_tutto(settings: Settings) -> None:
     settings.exact_cache.enabled = False
     settings.semantic_cache.enabled = False
     settings.context.enabled = False
+    settings.prompt.enabled = False
     settings.router.enabled = False
     settings.memory.enabled = False
     settings.budget.enabled = False
@@ -157,6 +168,17 @@ def _abilita_router(settings: Settings) -> None:
     settings.router.enabled = True
 
 
+def _abilita_prompt(settings: Settings) -> None:
+    _abilita_router(settings)
+    settings.prompt.enabled = True
+    settings.prompt.normalize = True
+    settings.prompt.strip_filler = True
+    # Le sostituzioni lessicali restano fuori dall'ablazione: il loro effetto
+    # dipende dal tokenizer vero, che qui non c'e'. Misurarle col simulatore
+    # darebbe un numero che conferma solo l'assunzione con cui e' calcolato.
+    settings.prompt.substitute = False
+
+
 # Gradini cumulativi dell'ablazione: la differenza fra due gradini consecutivi
 # e' il contributo dello stadio appena acceso.
 ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
@@ -165,6 +187,7 @@ ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
     ("+ potatura contesto", _abilita_contesto),
     ("+ cache esatta", _abilita_cache_esatta),
     ("+ effort adattivo", _abilita_router),
+    ("+ riscrittura prompt", _abilita_prompt),
 ]
 
 
@@ -205,7 +228,8 @@ async def _run_scenario(
             misura.cache_read_tokens += ctx.usage.cache_read_tokens
             misura.cache_write_tokens += ctx.usage.cache_creation_tokens
             misura.full_price_tokens += ctx.usage.input_tokens
-            misura.cost_usd += ctx.cost_usd
+            misura.cost_usd += ctx.total_cost_usd
+            misura.aux_cost_usd += ctx.aux_cost_usd
     finally:
         await gateway.shutdown()
 
@@ -540,3 +564,473 @@ async def measure_pruning_interaction(
             )
         )
     return esiti
+
+
+# --- compattazione del contesto -------------------------------------------
+
+
+@dataclass
+class CompactionVariant:
+    """Una strategia di compattazione messa alla prova."""
+
+    name: str
+    description: str
+    cost_usd: float
+    aux_cost_usd: float
+    cache_ratio: float
+    full_price_tokens: int
+    prompt_tokens: int
+    summaries: int
+
+
+async def measure_compaction(*, live: bool = False) -> list[CompactionVariant]:
+    """Confronta le strategie di taglio su una conversazione lunga.
+
+    La domanda a cui risponde e' se comprimere la cronologia convenga davvero,
+    una volta contato il prezzo della compressione: la chiamata al riassuntore,
+    e soprattutto il prompt caching che si perde quando il riassunto cambia.
+
+    Le varianti sono cumulative e isolano una tecnica ciascuna:
+
+    * *solo cache* - non si comprime affatto, e' il metro di paragone;
+    * *taglio a inseguimento* - il punto di taglio segue la coda della
+      conversazione, quindi si sposta a ogni turno (era il comportamento
+      originale del gateway);
+    * *taglio a scatti* - il punto di taglio avanza a blocchi, cosi' lo stesso
+      riassunto vale per piu' turni e il prefisso resta fermo;
+    * *scatti + riassunto incrementale* - quando il taglio avanza si riparte
+      dal riassunto precedente invece di rileggere tutta la cronologia.
+    """
+    from .workloads import scenario_conversazione_lunga
+
+    scenario = scenario_conversazione_lunga()
+
+    def _compattazione(settings: Settings, **modifiche: Any) -> None:
+        _abilita_cache_planner(settings)
+        settings.context.enabled = True
+        # Soglie abbassate apposta: con quelle predefinite nemmeno una
+        # conversazione di quaranta turni si avvicina alla finestra di Opus 5,
+        # e la compattazione non scatterebbe mai.
+        settings.context.trigger_ratio = 0.01
+        settings.context.hard_ratio = 0.02
+        settings.context.local_compaction = True
+        settings.context.min_gain_tokens = 0
+        for chiave, valore in modifiche.items():
+            setattr(settings.context, chiave, valore)
+
+    varianti: list[tuple[str, str, Callable[[Settings], None]]] = [
+        (
+            "solo cache",
+            "nessuna compattazione",
+            lambda s: _abilita_cache_planner(s),
+        ),
+        (
+            "taglio a inseguimento",
+            "il taglio segue la coda: riassunto nuovo a ogni turno",
+            lambda s: _compattazione(s, recompute_every_messages=1, incremental_summary=False),
+        ),
+        (
+            "taglio a scatti",
+            "il taglio avanza a blocchi: il riassunto si riusa",
+            lambda s: _compattazione(s, incremental_summary=False),
+        ),
+        (
+            "scatti + incrementale",
+            "il riassunto nuovo parte da quello vecchio",
+            lambda s: _compattazione(s, incremental_summary=True),
+        ),
+    ]
+
+    esiti: list[CompactionVariant] = []
+    for nome, descrizione, applica in varianti:
+        conteggio = {"n": 0}
+        misura = await _run_scenario_contando_riassunti(
+            scenario, make_settings(applica), nome, live=live, conteggio=conteggio
+        )
+        esiti.append(
+            CompactionVariant(
+                name=nome,
+                description=descrizione,
+                cost_usd=misura.cost_usd,
+                aux_cost_usd=misura.aux_cost_usd,
+                cache_ratio=misura.cache_ratio,
+                full_price_tokens=misura.full_price_tokens,
+                prompt_tokens=misura.prompt_tokens,
+                summaries=conteggio["n"],
+            )
+        )
+    return esiti
+
+
+async def _run_scenario_contando_riassunti(
+    scenario: Scenario,
+    settings: Settings,
+    variant: str,
+    *,
+    live: bool,
+    conteggio: dict[str, int],
+) -> Measurement:
+    """Come ``_run_scenario``, ma conta quante volte si chiama il riassuntore.
+
+    Il numero di riassunti e' la misura diretta della stabilita' del prefisso:
+    un riassunto per turno significa un prefisso nuovo per turno.
+    """
+    from .pipeline import context as context_module
+
+    originale = context_module.ContextStage._call_summarizer
+
+    async def contato(self, ctx, istruzioni, corpo):
+        conteggio["n"] += 1
+        return await originale(self, ctx, istruzioni, corpo)
+
+    context_module.ContextStage._call_summarizer = contato
+    try:
+        return await _run_scenario(scenario, settings, variant, live=live)
+    finally:
+        context_module.ContextStage._call_summarizer = originale
+
+
+# --- riscrittura del prompt -----------------------------------------------
+
+
+@dataclass
+class PromptVariant:
+    """Un livello di riscrittura del prompt messo alla prova."""
+
+    name: str
+    description: str
+    validated: bool
+    cost_usd: float
+    cache_ratio: float
+    prompt_tokens: int
+    full_price_tokens: int
+    tokens_removed: int
+    tokens_removed_uncached: int
+
+
+async def measure_prompt_optimization(*, live: bool = False) -> list[PromptVariant]:
+    """Misura cosa vale accorciare il prompt, e soprattutto *dove*.
+
+    Un avvertimento sul metodo, perche' senza di esso questi numeri si leggono
+    male. Il simulatore conta i token dalla lunghezza del testo. Va benissimo
+    per rispondere alla domanda strutturale - dove finiscono i token tolti, e
+    la riscrittura rompe la cache? - perche' li' quel che conta e' a quale
+    tariffa un token viene fatturato, non quanti caratteri servono a formarlo.
+    Non va bene per la domanda lessicale: se "usare" costi davvero meno token
+    di "utilizzare" lo sa solo `messages.count_tokens`. Sotto questa metrica
+    qualunque accorciamento sembra un guadagno, per costruzione.
+
+    Percio' le varianti riportano `validated`: vero quando il risultato non
+    dipende da quell'assunzione, falso quando ci si appoggia.
+    """
+    from .workloads import scenario_prompt_verboso
+
+    scenario = scenario_prompt_verboso()
+
+    def _prompt(settings: Settings, **modifiche: Any) -> None:
+        _abilita_cache_planner(settings)
+        settings.prompt.enabled = True
+        settings.prompt.normalize = False
+        settings.prompt.strip_filler = False
+        settings.prompt.substitute = False
+        for chiave, valore in modifiche.items():
+            setattr(settings.prompt, chiave, valore)
+
+    varianti: list[tuple[str, str, bool, Callable[[Settings], None]]] = [
+        (
+            "prompt originale",
+            "nessuna riscrittura",
+            True,
+            lambda s: (_abilita_cache_planner(s), setattr(s.prompt, "enabled", False))[0],
+        ),
+        (
+            "normalizzazione",
+            "spazi, righe vuote, caratteri invisibili: nessuna parola cambiata",
+            True,
+            lambda s: _prompt(s, normalize=True),
+        ),
+        (
+            "+ formule di riempimento",
+            "via le perifrasi che introducono un'istruzione senza aggiungerle nulla",
+            True,
+            lambda s: _prompt(s, normalize=True, strip_filler=True),
+        ),
+        (
+            "+ sostituzioni lessicali",
+            "sinonimi piu' corti - risparmio in token NON verificato",
+            False,
+            lambda s: _prompt(
+                s, normalize=True, strip_filler=True, substitute=True, only_verified=False
+            ),
+        ),
+    ]
+
+    esiti: list[PromptVariant] = []
+    for nome, descrizione, validata, applica in varianti:
+        conteggio = {"tolti": 0, "coda": 0}
+        misura = await _run_scenario_contando_riscritture(
+            scenario, make_settings(applica), nome, live=live, conteggio=conteggio
+        )
+        esiti.append(
+            PromptVariant(
+                name=nome,
+                description=descrizione,
+                validated=validata,
+                cost_usd=misura.cost_usd,
+                cache_ratio=misura.cache_ratio,
+                prompt_tokens=misura.prompt_tokens,
+                full_price_tokens=misura.full_price_tokens,
+                tokens_removed=conteggio["tolti"],
+                tokens_removed_uncached=conteggio["coda"],
+            )
+        )
+    return esiti
+
+
+async def _run_scenario_contando_riscritture(
+    scenario: Scenario,
+    settings: Settings,
+    variant: str,
+    *,
+    live: bool,
+    conteggio: dict[str, int],
+) -> Measurement:
+    """Come ``_run_scenario``, ma somma i token tolti dalla riscrittura."""
+    from .server import Gateway
+
+    gateway = Gateway(settings)
+    if not live:
+        stub_app, _ = create_stub()
+        gateway.client = anthropic.AsyncAnthropic(
+            api_key="bench",
+            base_url="http://simulatore",
+            http_client=anthropic.DefaultAsyncHttpxClient(
+                transport=httpx2.ASGITransport(app=stub_app)
+            ),
+        )
+    await gateway.startup()
+
+    misura = Measurement(scenario=scenario.name, variant=variant)
+    try:
+        for payload in scenario.requests:
+            request = ChatCompletionRequest.model_validate(payload)
+            inizio = time.monotonic()
+            _, ctx = await gateway.complete(request)
+            misura.latency_ms += (time.monotonic() - inizio) * 1000
+
+            misura.requests += 1
+            if ctx.source == SOURCE_API:
+                misura.upstream_calls += 1
+            misura.prompt_tokens += ctx.usage.total_prompt_tokens
+            misura.output_tokens += ctx.usage.output_tokens
+            misura.cache_read_tokens += ctx.usage.cache_read_tokens
+            misura.cache_write_tokens += ctx.usage.cache_creation_tokens
+            misura.full_price_tokens += ctx.usage.input_tokens
+            misura.cost_usd += ctx.total_cost_usd
+            misura.aux_cost_usd += ctx.aux_cost_usd
+            conteggio["tolti"] += ctx.prompt_tokens_removed
+            conteggio["coda"] += ctx.prompt_tokens_removed_uncached
+    finally:
+        await gateway.shutdown()
+
+    return misura
+
+
+# --- progressi fra una versione e l'altra ---------------------------------
+
+
+def stage_contributions_from_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ricostruisce i contributi degli stadi da una misura gia' registrata.
+
+    Serve al confronto fra versioni: i contributi non vengono salvati come
+    tali, ma sono ricavabili dai costi per variante, che invece lo sono. Cosi'
+    una misura vecchia resta interrogabile anche se nel frattempo il codice che
+    la calcolava e' cambiato.
+    """
+    per_variante: dict[str, float] = {}
+    for riga in results:
+        per_variante[riga["variant"]] = per_variante.get(riga["variant"], 0.0) + riga["cost_usd"]
+
+    riferimento = per_variante.get(BASELINE_VARIANT)
+    if not riferimento:
+        return []
+
+    contributi: list[dict[str, Any]] = []
+    precedente = riferimento
+    for nome, _ in ABLATION_STEPS[1:]:
+        if nome not in per_variante:
+            # Gradino assente: la misura e' di una versione che non aveva
+            # ancora questo stadio. Si interrompe invece di inventare uno zero,
+            # perche' i gradini successivi sono cumulativi e sarebbero falsati.
+            break
+        corrente = per_variante[nome]
+        contributi.append(
+            {
+                "stage": nome.removeprefix("+ ").strip(),
+                "saved_usd": precedente - corrente,
+                "saved_ratio": (precedente - corrente) / riferimento,
+                "cumulative_ratio": (riferimento - corrente) / riferimento,
+            }
+        )
+        precedente = corrente
+    return contributi
+
+
+async def stage_progress(
+    store: Store, corrente: list[dict[str, Any]], *, corpus: str | None = None
+) -> dict[str, Any]:
+    """Confronta i contributi di adesso con quelli della misura precedente.
+
+    Risponde alla domanda che un registro di ottimizzazioni deve saper
+    rispondere: *questa ottimizzazione e' migliorata rispetto a prima?* Senza
+    di essa il progetto puo' solo dire quanto risparmia oggi, non se ieri
+    risparmiava di piu'.
+
+    Il confronto avviene solo fra misure dello stesso corpus di scenari.
+    Aggiungere uno scenario cambia il denominatore di tutte le percentuali:
+    accostare due corpus diversi produrrebbe progressi immaginari.
+    """
+    etichetta = corpus or f"ablazione {CORPUS_VERSION}"
+    runs = await load_runs(store, limit=40)
+    ablazioni = [run for run in runs if run.get("corpus") == etichetta]
+    if len(ablazioni) < 2:
+        return {
+            "available": False,
+            "corpus": etichetta,
+            "runs_found": len(ablazioni),
+            "stages": [],
+        }
+
+    # `load_runs` restituisce dalla piu' recente: la prima e' quella appena
+    # registrata, la seconda e' il termine di paragone.
+    precedente = {
+        voce["stage"]: voce
+        for voce in stage_contributions_from_results(ablazioni[1]["results"])
+    }
+
+    righe: list[dict[str, Any]] = []
+    for voce in corrente:
+        prima = precedente.get(voce["stage"])
+        if prima is None:
+            righe.append(
+                {
+                    "stage": voce["stage"],
+                    "now": voce["saved_ratio"],
+                    "before": None,
+                    "delta": None,
+                    "status": "nuovo",
+                }
+            )
+            continue
+        delta = voce["saved_ratio"] - prima["saved_ratio"]
+        if delta > 0.002:
+            stato = "migliorato"
+        elif delta < -0.002:
+            stato = "peggiorato"
+        else:
+            stato = "invariato"
+        righe.append(
+            {
+                "stage": voce["stage"],
+                "now": voce["saved_ratio"],
+                "before": prima["saved_ratio"],
+                "delta": delta,
+                "status": stato,
+            }
+        )
+
+    return {
+        "available": True,
+        "corpus": etichetta,
+        "runs_found": len(ablazioni),
+        "previous_at": ablazioni[1]["created_at"],
+        "previous_label": ablazioni[1].get("label") or "",
+        "stages": righe,
+    }
+
+
+# --- chiave della cache esatta --------------------------------------------
+
+
+@dataclass
+class CacheKeyVariant:
+    """Effetto di come si calcola la chiave della cache esatta."""
+
+    scenario: str
+    key_kind: str
+    cost_usd: float
+    requests: int
+    upstream_calls: int
+
+    @property
+    def hits(self) -> int:
+        return self.requests - self.upstream_calls
+
+
+async def measure_cache_key(*, live: bool = False) -> list[CacheKeyVariant]:
+    """Misura quanto vale normalizzare il testo prima di calcolare la chiave.
+
+    E' l'ottimizzazione con la resa piu' alta di tutto il gateway, e la ragione
+    e' aritmetica: ogni altra leva sconta il prezzo di un token, un hit di
+    cache lo azzera. Il prompt caching serve un token a 0,1x; la cache esatta
+    non lo serve affatto.
+
+    Il confronto usa due carichi apposta. Uno ha domande ripetute identiche -
+    li' normalizzare non puo' cambiare nulla, ed e' la verifica che non ci sia
+    una regressione. L'altro ha le stesse domande scritte ogni volta con
+    spaziatura diversa, che e' il caso realistico: un utente che ritocca, un
+    template incoerente, un copia e incolla con virgolette tipografiche.
+    """
+    from .workloads import scenario_ripetitivo, scenario_ripetitivo_sciatto
+
+    scenari = [scenario_ripetitivo_sciatto(), scenario_ripetitivo()]
+
+    def _cache(settings: Settings, normalizza: bool) -> None:
+        _abilita_cache_planner(settings)
+        settings.exact_cache.enabled = True
+        settings.exact_cache.normalize_key = normalizza
+
+    esiti: list[CacheKeyVariant] = []
+    for scenario in scenari:
+        for etichetta, normalizza in (("byte grezzi", False), ("testo normalizzato", True)):
+            misura = await _run_scenario(
+                scenario,
+                make_settings(lambda s, n=normalizza: _cache(s, n)),
+                etichetta,
+                live=live,
+            )
+            esiti.append(
+                CacheKeyVariant(
+                    scenario=scenario.name,
+                    key_kind=etichetta,
+                    cost_usd=misura.cost_usd,
+                    requests=misura.requests,
+                    upstream_calls=misura.upstream_calls,
+                )
+            )
+    return esiti
+
+
+def gateway_overhead() -> dict[str, Any]:
+    """Testo che il gateway aggiunge di suo, prima e dopo la riscrittura.
+
+    Non e' una misura di esecuzione: e' il conteggio delle stringhe stesse. Ha
+    senso cosi' perche' quel testo e' fisso e nostro, e la domanda che pone -
+    quanto costa a ogni occorrenza - non dipende dal carico.
+    """
+    from .wording import CATALOG, catalog_totals
+
+    return {
+        "totals": catalog_totals(),
+        "items": [
+            {
+                "key": voce.key,
+                "purpose": voce.purpose,
+                "before": voce.legacy_tokens,
+                "after": voce.tokens,
+                "saved": voce.saved,
+                "text": voce.text if len(voce.text) <= 80 else voce.text[:77] + "...",
+            }
+            for voce in CATALOG
+        ],
+    }

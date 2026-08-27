@@ -143,3 +143,65 @@ def cached_response_copy(
     if ecotokens_meta:
         copy["ecotokens"] = ecotokens_meta
     return copy
+
+
+class _Vista:
+    """Accesso per attributi a una risposta gia' ridotta a dizionario.
+
+    Serve a riusare ``to_openai_response`` su una risposta ripresa dalla cache:
+    quella funzione legge attributi perche' nasce per gli oggetti dell'SDK, e
+    duplicarla per i dizionari significherebbe mantenerne due copie che con il
+    tempo divergono.
+    """
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def __getattr__(self, nome: str) -> Any:
+        return self._payload.get(nome)
+
+
+def openai_response_from_dict(
+    payload: dict[str, Any],
+    *,
+    model: str,
+    usage: Usage,
+    ecotokens_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Converte una risposta Anthropic in forma di dizionario nel formato OpenAI."""
+    return to_openai_response(
+        _Vista(payload), model=model, usage=usage, ecotokens_meta=ecotokens_meta
+    )
+
+
+def native_response_copy(
+    response: dict[str, Any], *, ecotokens_meta: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Ricopia una risposta nativa salvata in cache, dandole identita' nuova."""
+    copy = json.loads(json.dumps(response))
+    copy.pop("ecotokens", None)
+    copy["id"] = f"msg_{uuid.uuid4().hex[:24]}"
+    if ecotokens_meta:
+        copy["ecotokens"] = ecotokens_meta
+    return copy
+
+
+def to_plain_dict(oggetto: Any) -> dict[str, Any]:
+    """Riduce una risposta dell'SDK a JSON puro.
+
+    Serve a due cose che devono restare d'accordo: cio' che si salva in cache e
+    cio' che si restituisce a un client nativo. Il metodo esatto varia con la
+    versione dell'SDK, quindi si prova quello che c'e' invece di fissarne uno.
+    """
+    if oggetto is None:
+        return {}
+    if isinstance(oggetto, dict):
+        return oggetto
+    for metodo in ("model_dump", "to_dict", "dict"):
+        funzione = getattr(oggetto, metodo, None)
+        if callable(funzione):
+            try:
+                return json.loads(json.dumps(funzione(mode="json"), default=str))
+            except TypeError:
+                return json.loads(json.dumps(funzione(), default=str))
+    return json.loads(json.dumps(oggetto, default=str))

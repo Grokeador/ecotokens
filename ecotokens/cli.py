@@ -20,6 +20,42 @@ app = typer.Typer(add_completion=False, help="Gateway locale per Claude con econ
 console = Console()
 
 
+def esigi_credenziali() -> None:
+    """Ferma un comando --live prima che spenda, se non c'e' come autenticarsi.
+
+    Senza questo controllo l'SDK solleva un `TypeError` a meta' della prima
+    richiesta, e l'utente vede una traccia di stack invece di sapere che gli
+    manca una variabile d'ambiente. Il controllo guarda cio' che l'SDK ha
+    effettivamente risolto, non le variabili d'ambiente: cosi' riconosce anche
+    un profilo creato con `ant auth login`.
+    """
+    import anthropic
+
+    client = anthropic.AsyncAnthropic()
+    risolto = any(
+        getattr(client, nome, None) is not None
+        for nome in ("api_key", "auth_token", "credentials")
+    )
+    if risolto:
+        return
+
+    console.print("[red]Nessuna credenziale Anthropic trovata.[/]")
+    console.print(
+        "La misura --live chiama l'API vera e ha bisogno di autenticarsi. "
+        "Le chiavi si creano su https://console.anthropic.com/settings/keys"
+    )
+    console.print()
+    console.print("Impostala come variabile d'ambiente (poi riapri il terminale):")
+    console.print('  [cyan]setx ANTHROPIC_API_KEY "la-tua-chiave"[/]')
+    console.print()
+    console.print(
+        "[dim]Non metterla nel file di configurazione: e' il modo piu' facile "
+        "per pubblicarla per sbaglio.[/]"
+    )
+    raise typer.Exit(code=2)
+
+
+
 @app.command()
 def serve(
     host: Optional[str] = typer.Option(None, help="Indirizzo di ascolto"),
@@ -144,22 +180,67 @@ def purge(
 def bench(
     config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
     live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+    scenario: Optional[list[str]] = typer.Option(
+        None,
+        "--scenario",
+        help="Limita a uno o piu' scenari (ripetibile). Senza, li esegue tutti.",
+    ),
     label: str = typer.Option("misura", help="Etichetta della misura nello storico"),
     save: bool = typer.Option(True, help="Registra l'esito per il confronto nel tempo"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Non chiedere conferma in modalita' live"),
 ) -> None:
-    """Misura lo stesso carico con e senza gateway."""
-    from .bench import BASELINE_VARIANT, FULL_VARIANT, open_results_store, run_benchmark, save_run
+    """Misura lo stesso carico con e senza gateway.
+
+    Con ``--live`` la misura gira contro l'API vera e spende. Conviene partire
+    da un solo scenario (``--scenario chat``) per calibrare a pochi centesimi lo
+    scarto fra il simulatore e la realta', e decidere dopo se vale la spesa piena.
+    """
+    from .bench import (
+        BASELINE_VARIANT,
+        CORPUS_VERSION,
+        FULL_VARIANT,
+        open_results_store,
+        run_benchmark,
+        save_run,
+    )
+    from .workloads import all_scenarios, scenarios_by_name
 
     settings = load_settings(config)
+    radice = Path.cwd()
+
+    if scenario:
+        try:
+            scelti = scenarios_by_name(scenario, radice)
+        except ValueError as errore:
+            console.print(f"[red]{errore}[/]")
+            raise typer.Exit(code=2)
+        # Corpus distinto: confrontare un sottoinsieme con la serie completa
+        # mostrerebbe progressi immaginari, perche' cambia il denominatore.
+        corpus = f"sottoinsieme ({','.join(sorted(s.name for s in scelti))}) {CORPUS_VERSION}"
+    else:
+        scelti = all_scenarios(radice)
+        corpus = f"scenari standard {CORPUS_VERSION}"
+
+    richieste = sum(s.size for s in scelti) * 2  # riferimento + variante
     if live:
+        esigi_credenziali()
         console.print("[yellow]Modalita' live: questa misura consuma token veri.[/]")
+        console.print(
+            f"Scenari: [cyan]{', '.join(s.name for s in scelti)}[/] - "
+            f"[bold]{richieste}[/] richieste all'API."
+        )
+        if not yes and not typer.confirm("Procedo?", default=False):
+            console.print("Annullato.")
+            raise typer.Exit(code=1)
 
     async def _esegui():
-        run = await run_benchmark(label=label, live=live, project_root=Path.cwd())
+        run = await run_benchmark(
+            scenarios=scelti, label=label, live=live, project_root=radice
+        )
         if save:
             database, store = open_results_store(settings.storage.path)
             try:
-                await save_run(store, run, corpus="scenari standard")
+                await save_run(store, run, corpus=corpus)
             finally:
                 database.close()
         return run
@@ -214,7 +295,16 @@ def ablate(
     save: bool = typer.Option(True, help="Registra l'esito per il confronto nel tempo"),
 ) -> None:
     """Attribuisce il risparmio a ciascuno stadio, accendendoli uno alla volta."""
-    from .bench import BASELINE_VARIANT, open_results_store, run_ablation, save_run, stage_contributions
+    if live:
+        esigi_credenziali()
+    from .bench import (
+        BASELINE_VARIANT,
+        CORPUS_VERSION,
+        open_results_store,
+        run_ablation,
+        save_run,
+        stage_contributions,
+    )
 
     settings = load_settings(config)
 
@@ -223,7 +313,7 @@ def ablate(
         if save:
             database, store = open_results_store(settings.storage.path)
             try:
-                await save_run(store, run, corpus="scenari standard")
+                await save_run(store, run, corpus=f"scenari standard {CORPUS_VERSION}")
             finally:
                 database.close()
         return run
@@ -248,6 +338,43 @@ def ablate(
 
 
 @app.command()
+def compaction(
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Confronta le strategie di compattazione su una conversazione lunga."""
+    if live:
+        esigi_credenziali()
+    from .bench import measure_compaction
+
+    esiti = asyncio.run(measure_compaction(live=live))
+    riferimento = esiti[0].cost_usd
+
+    tabella = Table(title="Compattazione del contesto: conviene, e a quali condizioni")
+    tabella.add_column("Strategia")
+    tabella.add_column("Costo", justify="right")
+    tabella.add_column("di cui riassunti", justify="right")
+    tabella.add_column("Quota da cache", justify="right")
+    tabella.add_column("Riassunti", justify="right")
+    tabella.add_column("vs non comprimere", justify="right")
+    for voce in esiti:
+        delta = (riferimento - voce.cost_usd) / riferimento if riferimento else 0.0
+        stile = "green" if delta > 0 else "red" if delta < 0 else "dim"
+        tabella.add_row(
+            voce.name,
+            f"${voce.cost_usd:.4f}",
+            f"${voce.aux_cost_usd:.4f}",
+            f"{voce.cache_ratio * 100:.1f}%",
+            str(voce.summaries),
+            f"[{stile}]{delta * 100:+.1f}%[/]",
+        )
+    console.print(tabella)
+    console.print(
+        "\n[dim]Il numero di riassunti misura la stabilita' del prefisso: uno per turno "
+        "significa un prompt nuovo per turno, quindi cache mai riletta.[/]"
+    )
+
+
+@app.command()
 def optimize(
     config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
     live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
@@ -261,7 +388,7 @@ def optimize(
     async def _registra():
         database, store = open_results_store(settings.storage.path)
         try:
-            await save_run(store, run, corpus="ricerca configurazione")
+            await save_run(store, run, corpus=f"ricerca configurazione {CORPUS_VERSION}")
         finally:
             database.close()
 
@@ -294,6 +421,222 @@ def optimize(
         )
     else:
         console.print("La configurazione predefinita e' gia' la migliore fra quelle provate.")
+
+
+@app.command()
+def prompt(
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Misura i livelli di riscrittura del prompt."""
+    if live:
+        esigi_credenziali()
+    from .bench import measure_prompt_optimization
+
+    esiti = asyncio.run(measure_prompt_optimization(live=live))
+    origine = esiti[0].cost_usd
+
+    tabella = Table(title="Accorciare il prompt: quanto vale, e dove")
+    tabella.add_column("Livello")
+    tabella.add_column("Costo", justify="right")
+    tabella.add_column("Token tolti", justify="right")
+    tabella.add_column("fuori cache", justify="right")
+    tabella.add_column("Da cache", justify="right")
+    tabella.add_column("vs originale", justify="right")
+    for voce in esiti:
+        delta = (origine - voce.cost_usd) / origine if origine else 0.0
+        stile = "green" if delta > 0 else "red" if delta < 0 else "dim"
+        nome = voce.name if voce.validated else f"{voce.name} [yellow](non validato)[/]"
+        tabella.add_row(
+            nome,
+            f"${voce.cost_usd:.4f}",
+            f"{voce.tokens_removed:,}",
+            f"{voce.tokens_removed_uncached:,}",
+            f"{voce.cache_ratio * 100:.1f}%",
+            f"[{stile}]{delta * 100:+.1f}%[/]",
+        )
+    console.print(tabella)
+
+    # La resa si legge sull'ultimo livello validato, non sul migliore: prendere
+    # il massimo premierebbe la variante che ha tolto pochi token, e farebbe
+    # sembrare la resa il doppio di quella che e'.
+    validati = [v for v in esiti if v.validated and v.tokens_removed]
+    resa = (
+        (origine - validati[-1].cost_usd) / validati[-1].tokens_removed * 1000
+        if validati
+        else 0.0
+    )
+    console.print()
+    console.print(
+        f"[dim]Resa: ${resa:.5f} ogni mille token tolti, contro $0.00500 di prezzo "
+        "pieno dell'input su Opus 5. La differenza e' lo sconto che la cache aveva "
+        "gia' fatto su quei token: accorciare il prompt rende circa un quarto di "
+        "quello che sembra.[/]"
+    )
+
+
+@app.command()
+def substitutions(
+    config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
+    live: bool = typer.Option(
+        False, "--live", help="Interroga messages.count_tokens (richiede credenziali)"
+    ),
+    model: str = typer.Option("claude-opus-5", help="Modello su cui contare"),
+) -> None:
+    """Verifica quali sinonimi piu' corti costano davvero meno token.
+
+    Senza --live mostra soltanto i candidati e il loro stato: il conteggio dei
+    token non e' deducibile a mano, il tokenizer di Claude non e' pubblico e
+    l'unica autorita' e' l'API.
+    """
+    from .prompt_opt import SUBSTITUTIONS
+
+    settings = load_settings(config)
+
+    async def _verifica():
+        database = Database(settings.storage.path)
+        database.connect()
+        store = Store(database)
+        try:
+            if live:
+                import anthropic
+
+                from .pricing import resolve_model
+
+                client = anthropic.AsyncAnthropic()
+                bersaglio = resolve_model(model)
+                for voce in SUBSTITUTIONS:
+                    prima = await _conta(client, bersaglio, voce.source)
+                    dopo = await _conta(client, bersaglio, voce.target)
+                    await store.record_substitution_check(
+                        source=voce.source,
+                        target=voce.target,
+                        model=bersaglio,
+                        tokens_before=prima,
+                        tokens_after=dopo,
+                    )
+            return await store.substitution_report()
+        finally:
+            database.close()
+
+    report = asyncio.run(_verifica())
+
+    tabella = Table(title=f"Sostituzioni lessicali ({len(SUBSTITUTIONS)} candidati)")
+    tabella.add_column("Originale")
+    tabella.add_column("Sostituto")
+    tabella.add_column("Token", justify="right")
+    tabella.add_column("Esito")
+
+    per_sorgente = {riga["source"]: riga for riga in report}
+    for voce in SUBSTITUTIONS:
+        riga = per_sorgente.get(voce.source)
+        if riga is None:
+            tabella.add_row(voce.source, voce.target, "-", "[dim]non verificato[/]")
+            continue
+        delta = riga["tokens_before"] - riga["tokens_after"]
+        if riga["verified"]:
+            esito = f"[green]conferma: -{delta}[/]"
+        else:
+            esito = f"[red]scartata: {delta:+d}[/]"
+        tabella.add_row(
+            voce.source,
+            voce.target,
+            f"{riga['tokens_before']} -> {riga['tokens_after']}",
+            esito,
+        )
+    console.print(tabella)
+
+    if not live:
+        console.print()
+        console.print(
+            "[yellow]Nessuna verifica eseguita.[/] I candidati accorciano il testo in "
+            "caratteri, ma se accorcino anche in token lo dice solo il tokenizer vero."
+        )
+        console.print("Per interpellarlo:  [cyan]ecotokens substitutions --live[/]")
+        console.print(
+            "[dim]Finche' non sono verificate, lo stadio non le applica "
+            "(prompt.only_verified = true).[/]"
+        )
+
+
+async def _conta(client, model: str, testo: str) -> int:
+    """Token di un frammento, secondo l'API."""
+    risposta = await client.messages.count_tokens(
+        model=model,
+        messages=[{"role": "user", "content": testo}],
+    )
+    return int(risposta.input_tokens)
+
+
+
+@app.command()
+def cachekey(
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Misura quanto vale normalizzare il testo prima di calcolare la chiave."""
+    if live:
+        esigi_credenziali()
+    from .bench import measure_cache_key
+
+    esiti = asyncio.run(measure_cache_key(live=live))
+
+    tabella = Table(title="Chiave della cache esatta: byte grezzi o testo normalizzato")
+    tabella.add_column("Carico")
+    tabella.add_column("Chiave")
+    tabella.add_column("Costo", justify="right")
+    tabella.add_column("Hit", justify="right")
+    tabella.add_column("Chiamate API", justify="right")
+    for voce in esiti:
+        tabella.add_row(
+            voce.scenario,
+            voce.key_kind,
+            f"${voce.cost_usd:.4f}",
+            f"{voce.hits}/{voce.requests}",
+            str(voce.upstream_calls),
+        )
+    console.print(tabella)
+    console.print()
+    console.print(
+        "[dim]E' l'ottimizzazione con la resa piu' alta del gateway: ogni altra leva "
+        "sconta il prezzo di un token, un hit di cache lo azzera.[/]"
+    )
+
+
+@app.command()
+def overhead() -> None:
+    """Mostra il testo che il gateway aggiunge di suo ai prompt."""
+    from .bench import gateway_overhead
+
+    dati = gateway_overhead()
+    totali = dati["totals"]
+
+    tabella = Table(title="Testo aggiunto dal gateway, per occorrenza")
+    tabella.add_column("Voce")
+    tabella.add_column("Scopo")
+    tabella.add_column("Prima", justify="right")
+    tabella.add_column("Adesso", justify="right")
+    tabella.add_column("Variazione", justify="right")
+    for voce in dati["items"]:
+        stile = "green" if voce["saved"] > 0 else "red" if voce["saved"] < 0 else "dim"
+        tabella.add_row(
+            voce["key"],
+            voce["purpose"],
+            str(voce["before"]),
+            str(voce["after"]),
+            f"[{stile}]{voce['saved']:+d}[/]",
+        )
+    tabella.add_section()
+    quota = totali["saved"] / totali["before"] if totali["before"] else 0.0
+    tabella.add_row(
+        "[bold]totale[/]", "", str(totali["before"]), f"[bold]{totali['after']}[/]",
+        f"[bold green]{totali['saved']:+d} ({quota * 100:.0f}%)[/]",
+    )
+    console.print(tabella)
+    console.print()
+    console.print(
+        "[dim]Token per occorrenza, non per richiesta: sul totale di una fattura "
+        "incide poco. Fatto perche' e' gratis e senza rischio, non perche' sposti l'ago.[/]"
+    )
+
 
 
 @app.command()

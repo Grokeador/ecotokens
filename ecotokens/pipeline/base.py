@@ -27,6 +27,13 @@ SOURCE_API = "api"
 SOURCE_EXACT_CACHE = "exact_cache"
 SOURCE_SEMANTIC_CACHE = "semantic_cache"
 
+# Forma della porta da cui la richiesta e' entrata. Il gateway parla con un
+# solo provider - Anthropic - ma accetta due dialetti: quello OpenAI, per le
+# applicazioni che gia' esistono, e quello nativo di Claude, per i client che
+# lo parlano gia' e non hanno bisogno di nessuna traduzione.
+FORMAT_OPENAI = "openai"
+FORMAT_ANTHROPIC = "anthropic"
+
 
 class PipelineAbort(Exception):
     """Interrompe la richiesta prima di spendere token."""
@@ -40,7 +47,9 @@ class PipelineAbort(Exception):
 
 @dataclass
 class RequestContext:
-    request: ChatCompletionRequest
+    # Assente per le richieste native: quelle non passano da nessuna
+    # traduzione, quindi non esiste una versione OpenAI da conservare.
+    request: ChatCompletionRequest | None
     settings: Settings
     store: Store
     client: Any
@@ -50,6 +59,13 @@ class RequestContext:
     model: str
     params: dict[str, Any]
     stream: bool
+    # Dialetto della richiesta in arrivo. Gli stadi non devono guardarlo:
+    # lavorano tutti sui parametri Anthropic, che sono gli stessi in
+    # entrambi i casi. Serve alle rotte, per sapere come rispondere.
+    client_format: str = FORMAT_OPENAI
+    # Effort chiesto esplicitamente dal client, se l'ha chiesto. Il router
+    # non lo tocca: e' una scelta di chi ha scritto l'applicazione.
+    client_effort: str | None = None
     # Header HTTP della richiesta, in minuscolo.
     headers: dict[str, str] = field(default_factory=dict)
 
@@ -75,23 +91,58 @@ class RequestContext:
     cache_ttl: str = "5m"
 
     estimated_prompt_tokens: int = 0
+    # Token tolti dalla riscrittura del prompt, e quanti di quelli stavano
+    # fuori dal prefisso servito da cache. La distinzione conta: un token tolto
+    # al prefisso in cache vale un decimo di uno tolto alla coda.
+    prompt_tokens_removed: int = 0
+    prompt_tokens_removed_uncached: int = 0
+    # Token che il gateway aggiunge di suo al prompt: delimitatori attorno al
+    # riassunto, blocco della memoria, istruzioni di formato. L'utente li paga
+    # senza averli scritti, quindi vanno contati come tutto il resto.
+    overhead_tokens: int = 0
     started_at: float = field(default_factory=time.monotonic)
 
     # Compilati dallo stadio di contabilita' dopo la risposta.
     usage: Usage = field(default_factory=Usage)
     cost_usd: float = 0.0
     saved_usd: float = 0.0
-    # Risposta finale in formato OpenAI, valorizzata dalla rotta prima di
-    # eseguire gli stadi `after`: gli stadi di cache la salvano da qui.
-    openai_response: dict[str, Any] | None = None
+    # Spesa delle chiamate che il gateway fa per conto proprio: riassunti di
+    # compattazione, estrazione dei fatti da ricordare. Non compare in
+    # `response.usage` perche' non appartiene alla risposta dell'utente, ma
+    # l'utente la paga. Tenerla fuori dal conto farebbe sembrare gratuito ogni
+    # stadio che chiama un modello.
+    aux_usage: Usage = field(default_factory=Usage)
+    aux_cost_usd: float = 0.0
+    # Risposta finale nel formato atteso dal client, valorizzata dalla rotta
+    # prima di eseguire gli stadi `after`: gli stadi di cache la salvano da
+    # qui. Il formato e' quello della porta d'ingresso, non quello interno.
+    client_response: dict[str, Any] | None = None
+    # La stessa risposta in formato Anthropic: e' questa che finisce in
+    # cache. Il formato interno del gateway e' uno solo, e deve esserlo
+    # anche quello salvato, altrimenti un hit servito a un client dell'altro
+    # dialetto restituirebbe una risposta della forma sbagliata.
+    upstream_response: dict[str, Any] | None = None
 
     @property
     def session_id(self) -> str | None:
         return self.session.id if self.session else None
 
     @property
+    def total_cost_usd(self) -> float:
+        """Quanto e' costata davvero la richiesta, chiamate interne comprese."""
+        return self.cost_usd + self.aux_cost_usd
+
+    @property
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.started_at) * 1000
+
+    def has_tools(self) -> bool:
+        """Vero se la richiesta dichiara dei tool.
+
+        Si legge dai parametri, non dalla richiesta in arrivo: cosi' la
+        risposta e' la stessa da qualunque porta sia entrata.
+        """
+        return bool(self.params.get("tools"))
 
     def note(self, message: str) -> None:
         self.notes.append(message)
@@ -103,7 +154,7 @@ class RequestContext:
 
     def meta(self) -> dict[str, Any]:
         """Blocco diagnostico allegato alla risposta come campo ``ecotokens``."""
-        return {
+        blocco = {
             "source": self.source,
             "model": self.model,
             "session_id": self.session_id,
@@ -112,6 +163,9 @@ class RequestContext:
             "cached_prompt_tokens": self.usage.cache_read_tokens,
             "notes": list(self.notes),
         }
+        if self.aux_cost_usd:
+            blocco["aux_cost_usd"] = round(self.aux_cost_usd, 6)
+        return blocco
 
 
 class Stage(Protocol):

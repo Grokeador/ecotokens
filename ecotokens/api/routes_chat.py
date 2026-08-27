@@ -10,7 +10,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..pipeline.base import PipelineAbort, RequestContext
 from ..pricing import Usage
-from ..translate.from_anthropic import to_openai_response
+from ..translate.from_anthropic import (
+    openai_response_from_dict,
+    to_openai_response,
+    to_plain_dict,
+)
 from ..translate.stream import DONE, StreamTranslator, replay_response_as_stream, sse
 from .errors import error_response
 from .schemas import ChatCompletionRequest, error_payload
@@ -50,18 +54,24 @@ async def chat_completions(
     # Hit di cache: nessuna chiamata all'API, ma la contabilita' va comunque
     # aggiornata, altrimenti il risparmio non comparirebbe da nessuna parte.
     if ctx.short_circuit is not None:
-        ctx.openai_response = ctx.short_circuit
+        # In cache c'e' il formato canonico: qui va tradotto, perche' chi ha
+        # chiesto parla il dialetto OpenAI.
+        ctx.upstream_response = ctx.short_circuit
+        risposta = openai_response_from_dict(
+            ctx.short_circuit, model=ctx.model, usage=ctx.usage
+        )
+        ctx.client_response = risposta
         await gateway.pipeline.after(ctx, None)
-        ctx.short_circuit["ecotokens"] = ctx.meta()
+        risposta["ecotokens"] = ctx.meta()
         if body.stream:
             return StreamingResponse(
                 replay_response_as_stream(
-                    ctx.short_circuit, include_usage=body.wants_usage_in_stream()
+                    risposta, include_usage=body.wants_usage_in_stream()
                 ),
                 media_type="text/event-stream",
                 headers=SSE_HEADERS,
             )
-        return JSONResponse(content=ctx.short_circuit)
+        return JSONResponse(content=risposta)
 
     if body.stream:
         return StreamingResponse(
@@ -83,7 +93,8 @@ async def _call_upstream(gateway, ctx: RequestContext) -> JSONResponse:
 
     ctx.usage = Usage.from_api(getattr(message, "usage", None))
     response = to_openai_response(message, model=ctx.model, usage=ctx.usage)
-    ctx.openai_response = response
+    ctx.client_response = response
+    ctx.upstream_response = to_plain_dict(message)
 
     await gateway.pipeline.after(ctx, message)
     # Il blocco diagnostico si allega alla fine: solo dopo la contabilita'
@@ -136,7 +147,8 @@ async def _stream_upstream(
 
     ctx.usage = translator.usage
     response = to_openai_response(final_message, model=ctx.model, usage=ctx.usage)
-    ctx.openai_response = response
+    ctx.client_response = response
+    ctx.upstream_response = to_plain_dict(final_message)
     await gateway.pipeline.after(ctx, final_message)
 
     if body.wants_usage_in_stream():

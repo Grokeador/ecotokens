@@ -61,22 +61,45 @@ class RouterStage(BaseStage):
         if not self.config.effort_downshift:
             return
         # Un effort chiesto esplicitamente dal client non si tocca.
-        if ctx.request.reasoning_effort is not None:
+        if ctx.client_effort is not None:
             return
-        if not self._looks_simple(ctx):
+        if not self._question_looks_simple(ctx):
             return
+
+        if self._tools_in_play(ctx):
+            target = self.config.effort_with_tools
+            if target == "off":
+                ctx.note("effort invariato: la richiesta puo' chiamare un tool")
+                return
+            motivo = "domanda semplice ma con tool disponibili: si scende a meta' strada"
+        else:
+            target = self.config.simple_effort
+            motivo = "richiesta semplice, la cache resta valida"
 
         output_config = ctx.params.setdefault("output_config", {})
         previous = output_config.get("effort")
-        if previous == self.config.simple_effort:
+        if previous == target:
             return
-        output_config["effort"] = self.config.simple_effort
-        ctx.note(
-            f"effort abbassato da {previous} a {self.config.simple_effort}: "
-            "richiesta semplice, la cache resta valida"
-        )
+        output_config["effort"] = target
+        ctx.note(f"effort abbassato da {previous} a {target}: {motivo}")
 
-    def _looks_simple(self, ctx: RequestContext) -> bool:
+    @staticmethod
+    def _tools_in_play(ctx: RequestContext) -> bool:
+        """Vero se il modello potrebbe dover scegliere un tool.
+
+        La distinzione che conta non e' "ci sono tool dichiarati" ma "il
+        modello deve decidere se e quale usarne". Con ``tool_choice: none`` i
+        tool sono dichiarati e inutilizzabili: non c'e' nessuna scelta da fare,
+        e trattare quel caso come agentico costava effort senza motivo.
+        """
+        if not ctx.params.get("tools"):
+            return False
+        scelta = ctx.params.get("tool_choice")
+        if isinstance(scelta, dict) and scelta.get("type") == "none":
+            return False
+        return True
+
+    def _question_looks_simple(self, ctx: RequestContext) -> bool:
         """Euristica volutamente prudente: nel dubbio, non si abbassa nulla.
 
         Si guarda la domanda, non il prompt intero. Un system prompt lungo o
@@ -86,8 +109,6 @@ class RouterStage(BaseStage):
         leggendo il codice: l'ablazione attribuiva a questo stadio un
         risparmio esattamente pari a zero.
         """
-        if ctx.params.get("tools"):
-            return False
         ctx.estimated_prompt_tokens = ctx.estimated_prompt_tokens or estimate_prompt_tokens(
             ctx.params
         )
@@ -97,6 +118,17 @@ class RouterStage(BaseStage):
         if any(hint in text.lower() for hint in COMPLEXITY_HINTS):
             return False
         return True
+
+    def _looks_simple(self, ctx: RequestContext) -> bool:
+        """Criterio stretto, usato per la scelta del modello.
+
+        Cambiare modello e' molto piu' invasivo che abbassare l'effort: qui il
+        veto in blocco sui tool resta, perche' un modello diverso sceglie i
+        tool in modo diverso e l'errore non si paga in token ma in tentativi.
+        """
+        if self._tools_in_play(ctx):
+            return False
+        return self._question_looks_simple(ctx)
 
     # -- livello 2: modello ------------------------------------------------
 

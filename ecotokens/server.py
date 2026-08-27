@@ -12,22 +12,23 @@ from fastapi.responses import JSONResponse
 
 from .api.schemas import ChatCompletionRequest, error_payload
 from .config import Settings, load_settings
-from .pipeline.base import Pipeline, RequestContext
+from .pipeline.base import FORMAT_ANTHROPIC, Pipeline, RequestContext
 from .pipeline.budget import BudgetStage
 from .pipeline.cache_planner import CachePlannerStage
 from .pipeline.context import ContextStage
 from .pipeline.exact_cache import ExactCacheStage
 from .pipeline.ledger import LedgerStage
 from .pipeline.memory import MemoryStage
+from .pipeline.prompt import PromptOptimizerStage
 from .pipeline.router import RouterStage
 from .pipeline.semantic_cache import SemanticCacheStage
 from .pipeline.session import SessionStage
-from .pricing import Usage
+from .pricing import Usage, model_info, resolve_model
 from .store.db import Database
 from .store.repos import Store
 from .tokens import TokenCounter
-from .translate.from_anthropic import new_completion_id, to_openai_response
-from .translate.to_anthropic import build_anthropic_params
+from .translate.from_anthropic import new_completion_id, to_openai_response, to_plain_dict
+from .translate.to_anthropic import UNSUPPORTED_SAMPLING, build_anthropic_params
 
 logger = logging.getLogger("ecotokens")
 
@@ -81,6 +82,11 @@ class Gateway:
                 ExactCacheStage(settings),
                 SemanticCacheStage(settings),
                 BudgetStage(settings),
+                # Prima della memoria e della compattazione: quei due stadi
+                # devono lavorare sul testo gia' riscritto, altrimenti il
+                # riassunto verrebbe calcolato su un originale che poi non
+                # viene piu' inviato.
+                PromptOptimizerStage(settings),
                 MemoryStage(settings),
                 ContextStage(settings),
                 RouterStage(settings),
@@ -103,9 +109,78 @@ class Gateway:
             model=translation.model,
             params=translation.params,
             stream=request.stream,
+            client_effort=request.reasoning_effort,
             headers=headers,
             notes=list(translation.notes),
             dropped=list(translation.dropped),
+        )
+
+    def make_native_context(
+        self, body: dict[str, Any], headers: dict[str, str]
+    ) -> RequestContext:
+        """Contesto per una richiesta gia' in formato Anthropic.
+
+        Non c'e' nessuna traduzione da fare: il corpo *e'* gia' cio' che la
+        pipeline manipola. Restano tre cose da sistemare, e sono le stesse che
+        la traduzione fa per le richieste OpenAI:
+
+        * risolvere l'alias del modello (`claude-opus-5` e simili);
+        * togliere i parametri di campionamento che i modelli attuali
+          rifiutano con un 400, se un client li manda per abitudine;
+        * applicare i valori predefiniti del gateway dove il client tace.
+        """
+        params = dict(body)
+        params.pop("stream", None)
+
+        scartati = [nome for nome in UNSUPPORTED_SAMPLING if nome in params]
+        for nome in scartati:
+            params.pop(nome)
+
+        model = resolve_model(params.get("model") or self.settings.upstream.default_model)
+        params["model"] = model
+        info = model_info(model)
+
+        stream = bool(body.get("stream"))
+        if not params.get("max_tokens"):
+            params["max_tokens"] = min(
+                self.settings.upstream.default_max_tokens_stream
+                if stream
+                else self.settings.upstream.default_max_tokens,
+                info.max_output,
+            )
+        if self.settings.upstream.adaptive_thinking and "thinking" not in params:
+            params["thinking"] = {"type": "adaptive"}
+
+        # Gli stessi valori predefiniti dell'altra porta. Senza questo, la
+        # stessa domanda posta nei due dialetti produrrebbe parametri diversi,
+        # e quindi due voci di cache invece di una.
+        effort = (params.get("output_config") or {}).get("effort")
+        output_config = dict(params.get("output_config") or {})
+        output_config.setdefault("effort", self.settings.upstream.default_effort)
+        params["output_config"] = output_config
+
+        note = ["richiesta nativa: nessuna traduzione applicata"]
+        if scartati:
+            note.append(
+                "parametri di campionamento rimossi (i modelli attuali li rifiutano): "
+                + ", ".join(scartati)
+            )
+
+        return RequestContext(
+            request=None,
+            settings=self.settings,
+            store=self.store,
+            client=self.client,
+            counter=self.counter,
+            completion_id=new_completion_id(),
+            model=model,
+            params=params,
+            stream=stream,
+            client_format=FORMAT_ANTHROPIC,
+            client_effort=effort,
+            headers=headers,
+            notes=note,
+            dropped=scartati,
         )
 
     def messages_resource(self, ctx: RequestContext) -> tuple[Any, dict[str, Any]]:
@@ -136,7 +211,8 @@ class Gateway:
         await self.pipeline.before(ctx)
 
         if ctx.short_circuit is not None:
-            ctx.openai_response = ctx.short_circuit
+            ctx.client_response = ctx.short_circuit
+            ctx.upstream_response = ctx.short_circuit
             await self.pipeline.after(ctx, None)
             ctx.short_circuit["ecotokens"] = ctx.meta()
             return ctx.short_circuit, ctx
@@ -146,7 +222,8 @@ class Gateway:
 
         ctx.usage = Usage.from_api(getattr(message, "usage", None))
         response = to_openai_response(message, model=ctx.model, usage=ctx.usage)
-        ctx.openai_response = response
+        ctx.client_response = response
+        ctx.upstream_response = to_plain_dict(message)
 
         await self.pipeline.after(ctx, message)
         # Il blocco diagnostico si allega alla fine: solo dopo la contabilita'
@@ -207,9 +284,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     from .api.routes_admin import router as admin_router
     from .api.routes_chat import router as chat_router
+    from .api.routes_messages import router as messages_router
     from .api.routes_models import router as models_router
 
     app.include_router(chat_router, prefix="/v1")
+    # Porta nativa: stessa pipeline, nessuna traduzione.
+    app.include_router(messages_router, prefix="/v1")
     app.include_router(models_router, prefix="/v1")
     app.include_router(admin_router, prefix="/admin")
 

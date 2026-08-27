@@ -210,7 +210,15 @@ def _output_tokens(state: StubState, payload: dict[str, Any]) -> int:
     if (payload.get("thinking") or {}).get("type") != "adaptive":
         # Senza ragionamento adattivo resta solo la risposta visibile.
         moltiplicatore *= 0.5
-    return max(1, int(state.base_output_tokens * moltiplicatore))
+    generati = max(1, int(state.base_output_tokens * moltiplicatore))
+    # Il server smette di generare a `max_tokens` e fattura solo quello che ha
+    # generato. Senza questo taglio ogni tetto imposto dal gateway - per
+    # esempio quello sul riassunto di compattazione - resterebbe invisibile
+    # alla misura, e sembrerebbe inutile per costruzione.
+    tetto = payload.get("max_tokens")
+    if isinstance(tetto, int) and tetto > 0:
+        generati = min(generati, tetto)
+    return generati
 
 
 def _usage_for(state: StubState, payload: dict[str, Any]) -> dict[str, int]:

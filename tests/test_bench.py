@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from ecotokens.bench import (
+    ABLATION_STEPS,
     BASELINE_VARIANT,
     FULL_VARIANT,
     Comparison,
@@ -24,6 +25,9 @@ from ecotokens.bench import (
     run_benchmark,
     save_run,
     stage_contributions,
+    stage_contributions_from_results,
+    stage_progress,
+    BenchRun,
     run_ablation,
 )
 from ecotokens.config import Settings
@@ -143,10 +147,11 @@ async def test_l_ablazione_attribuisce_il_risparmio():
         "potatura contesto",
         "cache esatta",
         "effort adattivo",
+        "riscrittura prompt",
     ]
     # Il cumulato dell'ultimo gradino e' il risparmio totale della catena.
     riferimento = run.totals(BASELINE_VARIANT).cost_usd
-    completo = run.totals("+ effort adattivo").cost_usd
+    completo = run.totals(ABLATION_STEPS[-1][0]).cost_usd
     assert contributi[-1]["cumulative_usd"] == pytest.approx(riferimento - completo)
 
 
@@ -254,4 +259,136 @@ async def test_la_dashboard_completa_contiene_le_sezioni():
 
 def test_tutti_gli_scenari_sono_disponibili():
     nomi = {scenario.name for scenario in all_scenarios(PROGETTO)}
-    assert nomi == {"chat", "agente", "ripetitivo", "costruzione"}
+    assert nomi == {"chat", "agente", "ripetitivo", "prompt-verboso", "costruzione"}
+
+
+# --- progressi fra versioni -----------------------------------------------
+
+
+def test_i_contributi_si_ricostruiscono_da_una_misura_registrata():
+    """Una misura vecchia deve restare interrogabile anche dopo."""
+    righe = [
+        {"variant": BASELINE_VARIANT, "cost_usd": 10.0},
+        {"variant": "+ prompt caching", "cost_usd": 4.0},
+        {"variant": "+ potatura contesto", "cost_usd": 4.0},
+        {"variant": "+ cache esatta", "cost_usd": 3.0},
+        {"variant": "+ effort adattivo", "cost_usd": 2.5},
+        {"variant": "+ riscrittura prompt", "cost_usd": 2.4},
+    ]
+    contributi = stage_contributions_from_results(righe)
+    per_nome = {c["stage"]: c for c in contributi}
+
+    assert per_nome["prompt caching"]["saved_ratio"] == pytest.approx(0.6)
+    assert per_nome["potatura contesto"]["saved_ratio"] == pytest.approx(0.0)
+    assert per_nome["riscrittura prompt"]["cumulative_ratio"] == pytest.approx(0.76)
+
+
+def test_una_misura_di_una_versione_piu_vecchia_si_ferma_al_gradino_mancante():
+    """Non si inventa uno zero: i gradini sono cumulativi e sarebbero falsati."""
+    righe = [
+        {"variant": BASELINE_VARIANT, "cost_usd": 10.0},
+        {"variant": "+ prompt caching", "cost_usd": 4.0},
+        # gradini successivi assenti: misura di prima che esistessero
+    ]
+    contributi = stage_contributions_from_results(righe)
+    assert [c["stage"] for c in contributi] == ["prompt caching"]
+
+
+async def test_il_confronto_fra_versioni_riconosce_i_miglioramenti():
+    database, store = open_results_store(":memory:")
+    try:
+        vecchia = BenchRun(id="v1", label="prima", mode="simulato", created_at=1.0)
+        vecchia.measurements = [
+            Measurement(scenario="x", variant=BASELINE_VARIANT, cost_usd=10.0),
+            Measurement(scenario="x", variant="+ prompt caching", cost_usd=5.0),
+            Measurement(scenario="x", variant="+ potatura contesto", cost_usd=5.0),
+            Measurement(scenario="x", variant="+ cache esatta", cost_usd=4.5),
+            Measurement(scenario="x", variant="+ effort adattivo", cost_usd=4.5),
+            Measurement(scenario="x", variant="+ riscrittura prompt", cost_usd=4.5),
+        ]
+        await save_run(store, vecchia, corpus="prova")
+
+        nuova = BenchRun(id="v2", label="dopo", mode="simulato", created_at=2.0)
+        nuova.measurements = [
+            Measurement(scenario="x", variant=BASELINE_VARIANT, cost_usd=10.0),
+            Measurement(scenario="x", variant="+ prompt caching", cost_usd=4.0),
+            Measurement(scenario="x", variant="+ potatura contesto", cost_usd=4.5),
+            Measurement(scenario="x", variant="+ cache esatta", cost_usd=4.0),
+            Measurement(scenario="x", variant="+ effort adattivo", cost_usd=4.0),
+            Measurement(scenario="x", variant="+ riscrittura prompt", cost_usd=4.0),
+        ]
+        await save_run(store, nuova, corpus="prova")
+
+        corrente = stage_contributions(nuova)
+        progresso = await stage_progress(store, corrente, corpus="prova")
+
+        assert progresso["available"]
+        stati = {voce["stage"]: voce["status"] for voce in progresso["stages"]}
+        assert stati["prompt caching"] == "migliorato"
+        assert stati["potatura contesto"] == "peggiorato"
+        assert stati["cache esatta"] == "invariato"
+    finally:
+        database.close()
+
+
+async def test_senza_una_misura_precedente_il_confronto_si_astiene():
+    database, store = open_results_store(":memory:")
+    try:
+        progresso = await stage_progress(store, [], corpus="inesistente")
+        assert progresso["available"] is False
+        assert progresso["runs_found"] == 0
+    finally:
+        database.close()
+
+
+# --- riga di comando ------------------------------------------------------
+
+
+def test_il_filtro_di_scenario_seleziona_un_sottoinsieme():
+    """Serve a calibrare la prima misura --live a pochi centesimi."""
+    scelti = scenarios_by_name(["chat"], PROGETTO)
+    assert [s.name for s in scelti] == ["chat"]
+    assert sum(s.size for s in scelti) < sum(s.size for s in all_scenarios(PROGETTO))
+
+
+def test_uno_scenario_inesistente_elenca_quelli_validi():
+    with pytest.raises(ValueError) as errore:
+        scenarios_by_name(["pippo"], PROGETTO)
+    messaggio = str(errore.value)
+    assert "chat" in messaggio and "costruzione" in messaggio
+
+
+def test_senza_credenziali_una_misura_live_si_ferma_prima_di_spendere(monkeypatch):
+    """L'SDK segnalerebbe il problema a meta' della prima richiesta, con una
+    traccia di stack. Meglio fermarsi prima, con l'istruzione giusta."""
+    import typer
+
+    from ecotokens import cli
+
+    class ClientSenzaCredenziali:
+        api_key = None
+        auth_token = None
+        credentials = None
+
+    class FintoModulo:
+        AsyncAnthropic = staticmethod(lambda *a, **k: ClientSenzaCredenziali())
+
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", FintoModulo)
+    with pytest.raises(typer.Exit) as uscita:
+        cli.esigi_credenziali()
+    assert uscita.value.exit_code == 2
+
+
+def test_con_credenziali_la_misura_live_procede(monkeypatch):
+    from ecotokens import cli
+
+    class ClientConChiave:
+        api_key = "sk-finta"
+        auth_token = None
+        credentials = None
+
+    class FintoModulo:
+        AsyncAnthropic = staticmethod(lambda *a, **k: ClientConChiave())
+
+    monkeypatch.setitem(__import__("sys").modules, "anthropic", FintoModulo)
+    cli.esigi_credenziali()  # non deve sollevare nulla

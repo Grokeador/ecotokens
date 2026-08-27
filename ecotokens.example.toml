@@ -62,10 +62,57 @@ hard_ratio = 0.85
 local_compaction = true
 summary_model = "claude-haiku-4-5"
 keep_recent_messages = 8
+# Ogni quanti messaggi il punto di taglio puo' avanzare. E' il parametro che
+# rende la compattazione compatibile con il prompt caching: un taglio che
+# insegue la coda della conversazione produce un riassunto nuovo a ogni turno,
+# quindi un prefisso nuovo a ogni turno, quindi cache mai riletta. Misurato con
+# `ecotokens compaction`: a inseguimento si spende il 40% PIU' che non
+# comprimere affatto; a scatti si risparmia il 10%. Curva a U, minimo fra 8 e 16.
+recompute_every_messages = 12
+# Il riassunto nuovo riparte da quello vecchio e legge solo i messaggi aggiunti.
+incremental_summary = true
+# Tetto sul riassunto: non e' un risparmio misurato (sui carichi di prova non
+# morde mai), e' un paracadute contro il riassunto che parte per la tangente.
+summary_max_tokens = 600
+# Troncatura dei blocchi passati al riassuntore: per registrare che un file e'
+# stato letto non serve rispedire il file.
+transcript_block_chars = 400
+# Sotto questo guadagno lordo non si comprime: il riassunto costa una chiamata.
+min_gain_tokens = 2000
+
+[prompt]
+# Riscrittura del prompt in ingresso. I campi sono in ordine di rischio: il
+# primo non cambia una parola, l'ultimo le cambia tutte.
+enabled = true
+# Senza perdita: spazi ripetuti, righe vuote in eccesso, caratteri invisibili
+# da copia e incolla, virgolette tipografiche. I blocchi di codice recintati
+# restano intatti, perche' li' l'indentazione e' significato.
+normalize = true
+# Toglie le perifrasi che introducono un'istruzione senza aggiungerle nulla
+# ("e' importante notare che", "please note that"). Non e' senza perdita, ma
+# non cambia cosa viene chiesto.
+strip_filler = false
+# Sinonimi piu' corti. Spenta di default per un motivo di metodo: piu' corto in
+# caratteri non vuol dire piu' corto in token, e l'unica autorita' sui token e'
+# messages.count_tokens. Vedi only_verified.
+substitute = false
+# Applica solo le sostituzioni che il conteggio vero ha confermato. Si popola
+# con `ecotokens substitutions --live`. Spegnerlo significa fidarsi di
+# un'intuizione sul tokenizer.
+only_verified = true
+# Mai i messaggi assistant (parole che il modello ha detto davvero) ne' i tool
+# result (dati esterni: riscriverli e' falsificare un'osservazione).
+targets = ["system", "user"]
+min_chars = 200
 
 [exact_cache]
 enabled = true
 ttl_seconds = 86400
+# La chiave si calcola sul testo normalizzato: due richieste che differiscono
+# per uno spazio doppio o una virgoletta tipografica sono la stessa domanda.
+# Misurato con `ecotokens cachekey`: -56% su un carico con spaziatura variabile,
+# nessuna differenza quando le domande erano gia' identiche.
+normalize_key = true
 # Le richieste con tool non vengono servite da cache: il risultato dipende da
 # uno stato esterno che la cache non conosce.
 skip_when_tools = true
@@ -87,6 +134,14 @@ enabled = true
 # modello, quindi senza invalidare la cache.
 effort_downshift = true
 simple_effort = "low"
+# Cosa fare quando la domanda e' semplice ma il modello potrebbe dover scegliere
+# un tool. Misurato: togliere del tutto il veto varrebbe l'11,4% del costo, ma
+# il banco misura la lunghezza della risposta, non la sua qualita' - un effort
+# basso su un turno agentico puo' produrre la chiamata sbagliata, e un tentativo
+# in piu' costa piu' di quanto l'effort abbia risparmiato.
+# "medium" prende la parte sicura (2,6%), "low" prende tutto e scommette,
+# "off" ripristina il rifiuto in blocco.
+effort_with_tools = "medium"
 # Si misura la lunghezza della domanda, non del prompt intero.
 simple_max_question_tokens = 120
 # Livello rischioso: le cache sono legate al modello, quindi cambiarlo a meta'

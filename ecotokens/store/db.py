@@ -51,6 +51,20 @@ CREATE TABLE IF NOT EXISTS summaries (
     PRIMARY KEY (session_id, upto)
 );
 
+-- Esito del conteggio vero su ogni candidato alla sostituzione lessicale.
+-- Esiste perche' l'intuizione su quanti token vale una parola e' inaffidabile:
+-- solo `messages.count_tokens` lo sa, e la risposta dipende dal modello.
+CREATE TABLE IF NOT EXISTS substitution_checks (
+    source          TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    target          TEXT NOT NULL,
+    tokens_before   INTEGER NOT NULL,
+    tokens_after    INTEGER NOT NULL,
+    verified        INTEGER NOT NULL,
+    checked_at      REAL NOT NULL,
+    PRIMARY KEY (source, model)
+);
+
 CREATE TABLE IF NOT EXISTS usage_events (
     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id              TEXT,

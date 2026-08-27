@@ -20,6 +20,7 @@ from typing import Any
 from ..api.schemas import ChatCompletionRequest, ChatMessage
 from ..config import Settings
 from ..pricing import model_info, resolve_model
+from ..wording import JSON_OBJECT, OPERATOR_CLOSE, OPERATOR_OPEN, wrap
 
 # Parametri di campionamento rimossi dai modelli Claude attuali: inviarli
 # produce un 400. Vengono scartati e registrati.
@@ -181,7 +182,7 @@ def _append_mid_system(
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": f"<operator-instruction>\n{text}\n</operator-instruction>"}
+                {"type": "text", "text": wrap(OPERATOR_OPEN, OPERATOR_CLOSE, text)}
             ],
         }
     )
@@ -413,7 +414,7 @@ def _translate_response_format(
         return {"type": "json_schema", "schema": schema}
 
     if messages:
-        instruction = "Rispondi esclusivamente con un singolo oggetto JSON valido, senza testo attorno."
+        instruction = JSON_OBJECT
         last = messages[-1]
         if last.get("role") == "user" and isinstance(last.get("content"), list):
             last["content"].append({"type": "text", "text": instruction})

@@ -11,6 +11,7 @@ from ecotokens.config import Settings
 from ecotokens.translate.from_anthropic import to_openai_response, usage_payload
 from ecotokens.translate.to_anthropic import build_anthropic_params
 from ecotokens.pricing import Usage
+from ecotokens.wording import OPERATOR_OPEN
 
 
 @pytest.fixture
@@ -76,7 +77,8 @@ def test_system_a_meta_degrada_sui_modelli_senza_supporto(settings):
     )
     ultimo = result.params["messages"][-1]
     assert ultimo["role"] == "user"
-    assert "operator-instruction" in ultimo["content"][0]["text"]
+    assert OPERATOR_OPEN in ultimo["content"][0]["text"]
+    assert "Modalita' concisa." in ultimo["content"][0]["text"]
 
 
 def test_prefill_finale_rimosso(settings):

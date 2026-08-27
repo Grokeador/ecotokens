@@ -10,10 +10,28 @@ quasi sempre la voce di spesa piu' grossa del prompt.
 
 **Riassunto locale**: quando neanche la potatura basta, la parte vecchia della
 conversazione viene sostituita da un riassunto prodotto da un modello
-economico. Il punto delicato e' che il riassunto viene **calcolato una volta
-sola e poi riusato alla lettera**: riassumere di nuovo a ogni turno cambierebbe
-il prefisso del prompt e farebbe mancare la cache a ogni richiesta, spendendo
-piu' di quanto la compattazione fa risparmiare.
+economico.
+
+Il vincolo che governa tutto questo stadio e' che comprimere e mettere in cache
+tirano in direzioni opposte. Il prompt caching e' un match di prefisso: se la
+compattazione riscrive l'inizio del prompt a ogni turno, ogni turno manca la
+cache e si paga il prezzo pieno su tutto. Comprimere il 40% dei token e poi
+pagarli 10 volte tanto e' una perdita. Da qui le cinque regole applicate qui:
+
+1. **Il punto di taglio avanza a scatti**, non insegue la coda della
+   conversazione. Un taglio che si sposta di due messaggi a ogni turno produce
+   un riassunto diverso a ogni turno; a scatti di ``recompute_every_messages``
+   lo stesso riassunto vale per molti turni di fila e il prefisso resta fermo.
+2. **Il riassunto e' incrementale**: quando il taglio avanza si riparte da
+   quello precedente e si leggono solo i messaggi aggiunti, invece di rileggere
+   tutta la cronologia.
+3. **Il riassunto ha un tetto rigido.** Questi token si pagano una volta in
+   output e poi a ogni turno in input: un riassunto prolisso e' un costo
+   ricorrente.
+4. **La trascrizione data al riassuntore e' troncata**: per registrare che un
+   file e' stato letto non serve rispedire il file.
+5. **Non si comprime se non conviene**: sotto ``min_gain_tokens`` la chiamata
+   di riassunto costa piu' di quanto la compressione fa risparmiare.
 
 Nota sulla compattazione server-side dell'API (``compact_20260112``): non e'
 usata qui perche' richiede di riaccodare i blocchi di compattazione a ogni
@@ -26,20 +44,35 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..pricing import model_info, resolve_model
-from ..tokens import estimate_content_tokens, estimate_prompt_tokens
+from ..pricing import Usage, cost_usd, model_info, resolve_model
+from ..wording import (
+    MERGE_RULES,
+    NEW_CLOSE,
+    NEW_OPEN,
+    NOTES_CLOSE,
+    NOTES_OPEN,
+    SUMMARY_CLOSE,
+    SUMMARY_OPEN,
+    SUMMARY_RULES,
+    TOOL_CALL,
+    TOOL_RESULT,
+    wrap,
+)
+from ..tokens import estimate_content_tokens, estimate_prompt_tokens, estimate_tokens
 from .base import BaseStage, RequestContext
 
 logger = logging.getLogger("ecotokens.context")
 
 CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 
-SUMMARY_PROMPT = (
-    "Riassumi la conversazione qui sotto in un massimo di 15 punti elenco. "
-    "Conserva: decisioni prese, vincoli, dati concreti (nomi, numeri, percorsi di file), "
-    "e le richieste ancora aperte. Ometti convenevoli e ripetizioni. "
-    "Rispondi solo con il riassunto, senza introduzioni."
-)
+# Il riassuntore e' l'unico posto del gateway dove scriviamo un prompt per un
+# modello, quindi e' l'unico posto dove possiamo essere prolissi per sbaglio.
+# Queste istruzioni sono scritte per ottenere appunti, non prosa: la prosa
+# ricostruisce il contesto con frasi complete, e le frasi complete sono i token
+# che stiamo cercando di togliere.
+# Rapporto usato per tradurre il tetto in token in un tetto in righe. Il modello
+# rispetta molto meglio un limite espresso in righe che uno espresso in token.
+TOKEN_PER_RIGA = 25
 
 
 class ContextStage(BaseStage):
@@ -62,7 +95,7 @@ class ContextStage(BaseStage):
         self._apply_server_pruning(ctx, estimated, window)
 
         if self.config.local_compaction and ratio >= self.config.hard_ratio:
-            await self._apply_local_summary(ctx, window)
+            await self._apply_local_summary(ctx)
 
     # -- potatura lato server ---------------------------------------------
 
@@ -84,18 +117,20 @@ class ContextStage(BaseStage):
 
     # -- riassunto locale --------------------------------------------------
 
-    async def _apply_local_summary(self, ctx: RequestContext, window: int) -> None:
+    async def _apply_local_summary(self, ctx: RequestContext) -> None:
         messages = ctx.params.get("messages") or []
-        keep = self.config.keep_recent_messages
-        # Serve materiale sufficiente perche' riassumere abbia senso.
-        if len(messages) <= keep + 2:
+        cut = self._cut_point(ctx, messages)
+        if cut <= 1:
             return
 
-        cut = len(messages) - keep
-        # Il taglio non puo' cadere in mezzo a una coppia tool_use/tool_result:
-        # un tool_result orfano fa fallire la richiesta con un 400.
-        cut = _safe_cut_point(messages, cut)
-        if cut <= 1:
+        before_tokens = estimate_content_tokens(
+            [message.get("content") for message in messages[:cut]]
+        )
+        if before_tokens < self.config.min_gain_tokens:
+            ctx.note(
+                f"compattazione saltata: i {cut} messaggi vecchi valgono {before_tokens} "
+                f"token, sotto i {self.config.min_gain_tokens} che ripagano la chiamata"
+            )
             return
 
         summary = None
@@ -103,18 +138,14 @@ class ContextStage(BaseStage):
             summary = await ctx.store.get_summary(ctx.session.id, cut)
 
         if summary is None:
-            summary = await self._summarize(ctx, messages[:cut])
+            summary = await self._produce_summary(ctx, messages, cut)
             if summary is None:
                 return
             if ctx.session is not None:
                 await ctx.store.put_summary(ctx.session.id, cut, summary)
-            ctx.note(f"riassunti i primi {cut} messaggi con {self.config.summary_model}")
         else:
             ctx.note(f"riusato il riassunto dei primi {cut} messaggi: prefisso invariato")
 
-        before_tokens = estimate_content_tokens(
-            [message.get("content") for message in messages[:cut]]
-        )
         replacement = [
             {
                 "role": "user",
@@ -128,29 +159,99 @@ class ContextStage(BaseStage):
             }
         ]
         ctx.params["messages"] = replacement + messages[cut:]
+        ctx.overhead_tokens += estimate_tokens(SUMMARY_OPEN) + estimate_tokens(SUMMARY_CLOSE)
         after_tokens = estimate_content_tokens(replacement[0]["content"])
         ctx.note(
-            f"compattazione: {before_tokens} token di cronologia sostituiti da {after_tokens}"
+            f"compattazione: {before_tokens} token di cronologia sostituiti da "
+            f"{after_tokens} ({1 - after_tokens / before_tokens:.0%} in meno)"
         )
 
-    async def _summarize(self, ctx: RequestContext, messages: list[dict[str, Any]]) -> str | None:
-        """Chiama il modello economico per riassumere la parte vecchia.
+    def _cut_point(self, ctx: RequestContext, messages: list[dict[str, Any]]) -> int:
+        """Dove finisce la parte riassunta e comincia quella integrale.
+
+        Il taglio avanza a scatti di ``recompute_every_messages``. E' la regola
+        che rende la compattazione compatibile con il prompt caching: seguendo
+        la coda della conversazione il taglio si sposterebbe a ogni turno,
+        quindi il riassunto sarebbe sempre nuovo, quindi il prefisso sarebbe
+        sempre diverso e la cache mancherebbe a ogni richiesta. A scatti, lo
+        stesso riassunto vale per molti turni consecutivi.
+        """
+        grezzo = len(messages) - self.config.keep_recent_messages
+        if grezzo <= 1:
+            return 0
+
+        step = max(1, self.config.recompute_every_messages)
+        cut = (grezzo // step) * step
+        if cut <= 1:
+            # La conversazione non ha ancora riempito uno scatto intero ma la
+            # soglia dura e' gia' stata superata: qui il rischio e' sforare la
+            # finestra, e non sforare conta piu' della stabilita' del prefisso.
+            cut = grezzo
+            ctx.note(
+                "taglio non allineato allo scatto: si comprime comunque per non "
+                "sforare la finestra, il prefisso cambiera'"
+            )
+
+        # Il taglio non puo' cadere in mezzo a una coppia tool_use/tool_result:
+        # un tool_result orfano fa fallire la richiesta con un 400.
+        return _safe_cut_point(messages, cut)
+
+    async def _produce_summary(
+        self, ctx: RequestContext, messages: list[dict[str, Any]], cut: int
+    ) -> str | None:
+        """Calcola il riassunto dei primi ``cut`` messaggi.
+
+        Se esiste gia' un riassunto per un taglio precedente si riparte da
+        quello e si leggono solo i messaggi aggiunti nel frattempo: su una
+        conversazione lunga e' la differenza fra rileggere tutta la cronologia
+        a ogni scatto e rileggerne una fetta.
+        """
+        precedente = None
+        if self.config.incremental_summary and ctx.session is not None:
+            precedente = await ctx.store.get_previous_summary(ctx.session.id, cut)
+
+        righe = max(5, self.config.summary_max_tokens // TOKEN_PER_RIGA)
+
+        if precedente is not None:
+            base_upto, base_text = precedente
+            nuovi = self._render_transcript(messages[base_upto:cut])
+            if not nuovi.strip():
+                return base_text
+            istruzioni = MERGE_RULES.format(righe=righe)
+            corpo = (
+                f"<appunti-finora>\n{base_text}\n</appunti-finora>\n\n"
+                f"<messaggi-nuovi>\n{nuovi}\n</messaggi-nuovi>"
+            )
+            origine = f"riassunto esteso da {base_upto} a {cut} messaggi"
+        else:
+            corpo = self._render_transcript(messages[:cut])
+            if not corpo.strip():
+                return None
+            istruzioni = SUMMARY_RULES.format(righe=righe)
+            origine = f"riassunti i primi {cut} messaggi"
+
+        summary = await self._call_summarizer(ctx, istruzioni, corpo)
+        if summary is None:
+            return None
+        ctx.note(f"{origine} con {self.config.summary_model}")
+        return summary
+
+    async def _call_summarizer(
+        self, ctx: RequestContext, istruzioni: str, corpo: str
+    ) -> str | None:
+        """Chiama il modello economico e mette la spesa a carico della richiesta.
 
         E' una fork della richiesta principale e non riusa la cache del padre:
         gira su un altro modello, e le voci di cache sono legate al modello.
-        E' accettabile perche' succede una volta per punto di taglio, non a
-        ogni turno.
+        E' accettabile perche' succede una volta per scatto, non a ogni turno.
         """
-        transcript = _render_transcript(messages)
-        if not transcript.strip():
-            return None
         model = resolve_model(self.config.summary_model)
         try:
             response = await ctx.client.messages.create(
                 model=model,
-                max_tokens=2_000,
-                system=[{"type": "text", "text": SUMMARY_PROMPT}],
-                messages=[{"role": "user", "content": [{"type": "text", "text": transcript}]}],
+                max_tokens=self.config.summary_max_tokens,
+                system=[{"type": "text", "text": istruzioni}],
+                messages=[{"role": "user", "content": [{"type": "text", "text": corpo}]}],
                 output_config={"effort": "low"},
             )
         except Exception as error:  # la compattazione non deve far fallire la richiesta
@@ -158,12 +259,81 @@ class ContextStage(BaseStage):
             ctx.note("riassunto non riuscito: la conversazione resta integrale")
             return None
 
+        self._charge(ctx, model, response)
+
         parts = [
             block.text
             for block in getattr(response, "content", []) or []
             if getattr(block, "type", None) == "text"
         ]
         return "".join(parts).strip() or None
+
+    @staticmethod
+    def _charge(ctx: RequestContext, model: str, response: Any) -> None:
+        """Registra la spesa del riassuntore sul contesto della richiesta.
+
+        Senza questo la compattazione risulterebbe gratuita in ogni misura, e
+        uno stadio che sembra gratuito viene acceso quando non conviene.
+        """
+        usage = Usage.from_api(getattr(response, "usage", None))
+        speso = cost_usd(model, usage, "5m")
+        ctx.aux_usage = Usage(
+            input_tokens=ctx.aux_usage.input_tokens + usage.input_tokens,
+            output_tokens=ctx.aux_usage.output_tokens + usage.output_tokens,
+            cache_creation_tokens=ctx.aux_usage.cache_creation_tokens
+            + usage.cache_creation_tokens,
+            cache_read_tokens=ctx.aux_usage.cache_read_tokens + usage.cache_read_tokens,
+        )
+        ctx.aux_cost_usd += speso
+        ctx.note(
+            f"il riassunto e' costato {usage.total_prompt_tokens} token di input e "
+            f"{usage.output_tokens} di output su {model} ({speso:.6f} USD)"
+        )
+
+    def _render_transcript(self, messages: list[dict[str, Any]]) -> str:
+        """Trascrizione compatta della parte da riassumere.
+
+        Ogni blocco viene troncato al centro: l'inizio e la fine di un testo
+        dicono quasi sempre di cosa si trattava, e per il riassuntore basta
+        quello. Rispedire per intero un file letto o un risultato di tool
+        significa pagare due volte gli stessi token, una all'andata e una nel
+        riassunto.
+        """
+        limite = max(80, self.config.transcript_block_chars)
+        lines: list[str] = []
+        for message in messages:
+            role = message.get("role", "?")
+            content = message.get("content")
+            if isinstance(content, str):
+                text = _tronca(content, limite)
+            elif isinstance(content, list):
+                pieces = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "text":
+                        pieces.append(_tronca(str(block.get("text", "")), limite))
+                    elif block.get("type") == "tool_use":
+                        pieces.append(TOOL_CALL.format(name=block.get("name")))
+                    elif block.get("type") == "tool_result":
+                        # Il contenuto di un tool result e' gia' stato usato dal
+                        # modello quando e' arrivato: al riassunto serve sapere
+                        # che c'e' stato, non cosa diceva.
+                        pieces.append(TOOL_RESULT)
+                text = " ".join(pieces)
+            else:
+                text = ""
+            if text.strip():
+                lines.append(f"{role}: {text.strip()}")
+        return "\n".join(lines)
+
+
+def _tronca(text: str, limite: int) -> str:
+    """Tronca al centro, conservando inizio e fine."""
+    if len(text) <= limite:
+        return text
+    meta = limite // 2
+    return f"{text[:meta]} […] {text[-meta:]}"
 
 
 def _safe_cut_point(messages: list[dict[str, Any]], cut: int) -> int:
@@ -184,29 +354,3 @@ def _has_orphan_tool_result(tail: list[dict[str, Any]]) -> bool:
     return any(
         isinstance(block, dict) and block.get("type") == "tool_result" for block in content
     )
-
-
-def _render_transcript(messages: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
-    for message in messages:
-        role = message.get("role", "?")
-        content = message.get("content")
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            pieces = []
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "text":
-                    pieces.append(str(block.get("text", "")))
-                elif block.get("type") == "tool_use":
-                    pieces.append(f"[chiamata a {block.get('name')}]")
-                elif block.get("type") == "tool_result":
-                    pieces.append("[risultato di tool]")
-            text = " ".join(pieces)
-        else:
-            text = ""
-        if text.strip():
-            lines.append(f"{role}: {text.strip()}")
-    return "\n".join(lines)

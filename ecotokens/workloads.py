@@ -369,6 +369,151 @@ def _project_sources(project_root: Path, max_files: int) -> list[tuple[str, str]
     return [(percorso, contenuto) for _, percorso, contenuto in candidati[:max_files]]
 
 
+SYSTEM_VERBOSO = """You are   an   expert assistant.
+
+It is important to note that  your task is to  help the user with their questions.
+
+## Guidelines
+
+Please note that you must always follow the guidelines below.   In order to be
+helpful, you have the ability to  make use of the tools provided.
+
+- It is important to note that  you should  utilize  the correct format.​
+- In the event that the user asks something unclear, please kindly ask for
+  clarification.
+- Due to the fact that responses are logged, prior to answering you must
+  verify a large number of  details.
+- For the reason that accuracy matters, subsequent to each answer you should
+  double‑check your work.
+
+## Output
+
+Your task is to  produce output in the following shape:
+
+```json
+{
+    "answer":   "the answer",
+    "confidence":   0.0
+}
+```
+
+It is important to note that  the majority of  requests are simple.   At this
+point in time, with regard to  formatting, please note that  you should use
+plain text unless the user asks otherwise.
+
+
+"""
+
+
+DOMANDA_VERBOSA = (
+    "Per favore, al fine di capire meglio, vorrei che tu mi spiegassi "
+    "in relazione al dimensionamento del sistema, e' importante notare che "
+    "attualmente utilizziamo un numero elevato di connessioni. "
+    "Nel caso in cui il carico aumenti, e' necessario che il sistema "
+    "abbia la possibilita' di   scalare.   "
+)
+
+
+def scenario_ripetitivo_sciatto(uniche: int = 4, ripetizioni: int = 3) -> Scenario:
+    """Le stesse domande, riscritte ogni volta con spaziatura diversa.
+
+    E' il caso realistico che la cache esatta perde: un utente che ritocca la
+    domanda, un template che a volte lascia due spazi, un copia e incolla che
+    porta virgolette tipografiche o uno spazio unificatore. Il testo e' lo
+    stesso, ma la chiave calcolata sui byte grezzi cambia, e la stessa risposta
+    si paga tante volte quante sono le varianti.
+    """
+    scenario = Scenario(
+        name="ripetitivo-sciatto",
+        description=f"{uniche} domande ripetute {ripetizioni} volte con spaziatura diversa",
+    )
+    system = {"role": "system", "content": "Istruzione operativa dettagliata. " * 900}
+    domande = [
+        "Qual e' la politica di rimborso per gli ordini gia' spediti?",
+        "Come si reimposta la password di un account aziendale?",
+        "Quali metodi di pagamento accettate per le fatture ricorrenti?",
+        "Entro quanti giorni arriva la merce nel nord Italia?",
+    ][:uniche]
+
+    # Varianti che non cambiano una parola: doppio spazio, riga vuota in piu',
+    # spazio in coda, virgolette tipografiche, spazio unificatore.
+    def variante(testo: str, indice: int) -> str:
+        if indice % 3 == 0:
+            return testo
+        if indice % 3 == 1:
+            return testo.replace(" ", "  ", 2) + "   "
+        return "\n" + testo.replace("'", "’") + "\n\n"
+
+    for giro in range(ripetizioni):
+        for domanda in domande:
+            scenario.requests.append(
+                _request([system, {"role": "user", "content": variante(domanda, giro)}])
+            )
+    return scenario
+
+
+
+def scenario_prompt_verboso(turns: int = 8) -> Scenario:
+    """Prompt scritti come li scrive la gente: verbosi, con spazi a caso.
+
+    Gli altri scenari usano una frase ripetuta all'infinito, che e' comoda per
+    misurare la cache ma non ha niente da riscrivere. Qui il testo ha i difetti
+    veri dei prompt di produzione: formule di cortesia, perifrasi, doppi spazi,
+    caratteri invisibili da copia e incolla, e un blocco di codice che non deve
+    essere toccato.
+    """
+    scenario = Scenario(
+        name="prompt-verboso",
+        description=f"{turns} turni con prompt di sistema e domande scritti in modo prolisso",
+    )
+    storia: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_VERBOSO * 12}]
+    for turno in range(turns):
+        storia = storia + [
+            {"role": "user", "content": DOMANDA_VERBOSA * 6 + f" Punto {turno}."}
+        ]
+        scenario.requests.append(_request(list(storia)))
+        storia = storia + [{"role": "assistant", "content": "Risposta di prova."}]
+    return scenario
+
+
+
+def scenario_conversazione_lunga(turns: int = 40, parole_risposta: int = 260) -> Scenario:
+    """Consulenza lunga: l'unico carico dove la compattazione entra in gioco.
+
+    Gli altri scenari non arrivano mai vicini alla finestra di contesto, quindi
+    non dicono nulla sul riassunto locale. Qui la cronologia cresce fino a
+    dominare il prompt, che e' la condizione in cui bisogna decidere se
+    comprimere conviene.
+
+    Non fa parte di ``all_scenarios``: richiede soglie abbassate per scattare,
+    e mescolarlo agli altri renderebbe i numeri di riferimento incomparabili
+    con quelli gia' pubblicati.
+    """
+    scenario = Scenario(
+        name="conversazione-lunga",
+        description=f"Consulenza di {turns} turni: la cronologia diventa la voce di spesa",
+    )
+    storia: list[dict[str, Any]] = [
+        {"role": "system", "content": "Istruzione operativa dettagliata. " * 900}
+    ]
+    for turno in range(turns):
+        storia = storia + [
+            {
+                "role": "user",
+                "content": f"Domanda numero {turno} sul dimensionamento del sistema. "
+                + "Dettaglio della situazione corrente. " * 40,
+            }
+        ]
+        scenario.requests.append(_request(list(storia)))
+        storia = storia + [
+            {
+                "role": "assistant",
+                "content": f"Analisi del punto {turno}. " * parole_risposta,
+            }
+        ]
+    return scenario
+
+
 def all_scenarios(project_root: Path | None = None) -> list[Scenario]:
     """Il set completo di carichi del banco di misura."""
     root = project_root or Path.cwd()
@@ -376,6 +521,7 @@ def all_scenarios(project_root: Path | None = None) -> list[Scenario]:
         scenario_chat(),
         scenario_agente(),
         scenario_ripetitivo(),
+        scenario_prompt_verboso(),
         scenario_costruzione(root),
     ]
 

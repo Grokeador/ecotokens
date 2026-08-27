@@ -17,7 +17,14 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-  "anthropic>=0.40",
+  # 1.x, non 0.x: l'SDK 1.0 gira su httpx2 e ha una superficie diversa.
+  # Un pin permissivo lascerebbe installare una 0.x su cui questo codice non
+  # funziona, e l'errore arriverebbe solo alla prima richiesta.
+  "anthropic>=1.0,<2",
+  # Usato direttamente da bench.py per il trasporto ASGI verso il simulatore.
+  # Arriva anche come dipendenza dell'SDK, ma qui lo importiamo noi: dichiararlo
+  # e' l'unico modo perche' resti garantito.
+  "httpx2>=2.0",
   "fastapi>=0.115",
   "uvicorn>=0.30",
   "pydantic>=2.7",
@@ -34,7 +41,7 @@ dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27", "openai>=1.40"]
 ecotokens = "ecotokens.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/your-user/ecotokens"
+# Homepage = "https://github.com/<utente>/ecotokens"  # da valorizzare alla pubblicazione
 
 [tool.hatch.build.targets.wheel]
 packages = ["ecotokens"]

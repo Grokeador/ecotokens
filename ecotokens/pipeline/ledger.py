@@ -34,7 +34,16 @@ class LedgerStage(BaseStage):
             ctx.usage = usage
             ctx.cost_usd = cost_usd(ctx.model, usage, ctx.cache_ttl)
             baseline = baseline_cost_usd(ctx.model, usage)
-            ctx.saved_usd = baseline - ctx.cost_usd
+            # Le chiamate che il gateway ha fatto per conto proprio - il
+            # riassunto di compattazione - le paga comunque l'utente: entrano
+            # nel conto, altrimenti uno stadio che chiama un modello sembra
+            # gratuito e viene acceso quando non conviene.
+            ctx.saved_usd = baseline - ctx.total_cost_usd
+            if ctx.aux_cost_usd:
+                ctx.note(
+                    f"chiamate interne del gateway: {ctx.aux_cost_usd:.6f} USD "
+                    "conteggiati nel risparmio"
+                )
             if ctx.saved_usd < 0:
                 # Succede quando si e' pagata una scrittura di cache che nessuna
                 # richiesta successiva ha riletto. Va reso visibile, non nascosto.
@@ -53,7 +62,7 @@ class LedgerStage(BaseStage):
             model=ctx.model,
             source=ctx.source,
             usage=ctx.usage,
-            cost_usd=ctx.cost_usd,
+            cost_usd=ctx.total_cost_usd,
             baseline_cost_usd=baseline,
             saved_usd=ctx.saved_usd,
             latency_ms=ctx.elapsed_ms,

@@ -188,6 +188,21 @@ class Store:
         )
         return row["text"] if row else None
 
+    async def get_previous_summary(self, session_id: str, before: int) -> tuple[int, str] | None:
+        """Riassunto piu' avanzato fra quelli gia' calcolati prima di ``before``.
+
+        Serve al riassunto incrementale: quando il punto di taglio avanza, il
+        riassunto nuovo parte da questo e legge solo i messaggi aggiunti nel
+        frattempo, invece di rileggere da capo tutta la cronologia.
+        """
+        row = await self.db.query_one(
+            """SELECT upto, text FROM summaries
+               WHERE session_id = ? AND upto < ?
+               ORDER BY upto DESC LIMIT 1""",
+            (session_id, before),
+        )
+        return (row["upto"], row["text"]) if row else None
+
     async def put_summary(self, session_id: str, upto: int, text: str) -> None:
         await self.db.execute(
             """INSERT INTO summaries (session_id, upto, text, created_at)
@@ -195,6 +210,63 @@ class Store:
                ON CONFLICT(session_id, upto) DO UPDATE SET text = excluded.text""",
             (session_id, upto, text, _now()),
         )
+
+    # -- sostituzioni lessicali --------------------------------------------
+
+    async def verified_substitutions(self, model: str | None = None) -> list[str]:
+        """Candidati che il conteggio vero ha promosso.
+
+        Vuoto finche' nessuno ha eseguito ``ecotokens substitutions --live``:
+        senza quel passaggio non si sa se una parola piu' corta sia anche piu'
+        economica, e lo stadio preferisce non applicare nulla piuttosto che
+        applicare un'intuizione.
+        """
+        if model:
+            righe = await self.db.query(
+                "SELECT source FROM substitution_checks WHERE verified = 1 AND model = ?",
+                (model,),
+            )
+        else:
+            righe = await self.db.query(
+                "SELECT DISTINCT source FROM substitution_checks WHERE verified = 1"
+            )
+        return [riga["source"] for riga in righe]
+
+    async def record_substitution_check(
+        self,
+        *,
+        source: str,
+        target: str,
+        model: str,
+        tokens_before: int,
+        tokens_after: int,
+    ) -> None:
+        await self.db.execute(
+            """INSERT INTO substitution_checks
+               (source, model, target, tokens_before, tokens_after, verified, checked_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source, model) DO UPDATE SET
+                 target = excluded.target,
+                 tokens_before = excluded.tokens_before,
+                 tokens_after = excluded.tokens_after,
+                 verified = excluded.verified,
+                 checked_at = excluded.checked_at""",
+            (
+                source,
+                model,
+                target,
+                tokens_before,
+                tokens_after,
+                1 if tokens_after < tokens_before else 0,
+                _now(),
+            ),
+        )
+
+    async def substitution_report(self) -> list[dict[str, Any]]:
+        righe = await self.db.query(
+            "SELECT * FROM substitution_checks ORDER BY (tokens_before - tokens_after) DESC"
+        )
+        return [dict(riga) for riga in righe]
 
     # -- contabilita' ------------------------------------------------------
 

@@ -22,7 +22,8 @@ import logging
 from typing import Any
 
 from ..pricing import Usage, baseline_cost_usd
-from ..translate.from_anthropic import cached_response_copy
+from ..prompt_opt import normalize
+from ..translate.from_anthropic import native_response_copy
 from .base import SOURCE_SEMANTIC_CACHE, BaseStage, RequestContext
 
 logger = logging.getLogger("ecotokens.semantic")
@@ -60,7 +61,7 @@ class SemanticCacheStage(BaseStage):
     # -- ciclo della richiesta --------------------------------------------
 
     async def before(self, ctx: RequestContext) -> None:
-        if ctx.request.has_tools() or ctx.cache_key is None:
+        if ctx.has_tools() or ctx.cache_key is None:
             return
         query = _last_user_text(ctx.params)
         if not query.strip():
@@ -90,12 +91,12 @@ class SemanticCacheStage(BaseStage):
         ctx.cost_usd = 0.0
         ctx.saved_usd = avoided
         ctx.note(f"risposta servita dalla cache semantica (similarita' {best_score:.4f})")
-        ctx.short_circuit = cached_response_copy(entry.response, ecotokens_meta=ctx.meta())
+        ctx.short_circuit = native_response_copy(entry.response, ecotokens_meta=ctx.meta())
 
     async def after(self, ctx: RequestContext, message: Any | None) -> None:
         if message is None or ctx.source != "api" or ctx.cache_key is None:
             return
-        if ctx.request.has_tools() or ctx.openai_response is None:
+        if ctx.has_tools() or ctx.upstream_response is None:
             return
         query = _last_user_text(ctx.params)
         vector = self._embed(query)
@@ -115,6 +116,11 @@ class SemanticCacheStage(BaseStage):
     def _embed(self, text: str) -> Any:
         if self._embedder is None or self._numpy is None:
             return None
+        # Stessa normalizzazione della cache esatta. Gli embedding sono
+        # abbastanza robusti da assorbire uno spazio doppio, ma non del tutto:
+        # normalizzare prima toglie una fonte di rumore che sposta il coseno
+        # senza che nessuna parola sia cambiata.
+        text = normalize(text)
         try:
             vectors = list(self._embedder.embed([text]))
         except Exception as error:

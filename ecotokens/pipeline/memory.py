@@ -21,18 +21,11 @@ import logging
 from typing import Any
 
 from ..pricing import model_info, resolve_model
+from ..tokens import estimate_tokens
+from ..wording import EXTRACTION_RULES, MEMORY_CLOSE, MEMORY_OPEN, wrap
 from .base import BaseStage, RequestContext
 
 logger = logging.getLogger("ecotokens.memory")
-
-EXTRACTION_PROMPT = (
-    "Estrai dalla conversazione i fatti stabili che varra' la pena ricordare nei "
-    "prossimi scambi: preferenze dell'utente, vincoli, decisioni prese, dati "
-    "concreti (nomi, versioni, percorsi). Ignora tutto cio' che vale solo per "
-    "questo turno. Rispondi con un array JSON di stringhe, al massimo 5 elementi. "
-    "Se non c'e' nulla da ricordare rispondi []."
-)
-
 
 class MemoryStage(BaseStage):
     name = "memory"
@@ -83,7 +76,7 @@ class MemoryStage(BaseStage):
             response = await ctx.client.messages.create(
                 model=model,
                 max_tokens=1_000,
-                system=[{"type": "text", "text": EXTRACTION_PROMPT}],
+                system=[{"type": "text", "text": EXTRACTION_RULES}],
                 messages=[
                     {
                         "role": "user",

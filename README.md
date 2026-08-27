@@ -1,9 +1,26 @@
 # EcoTokens
 
-Gateway locale che si mette tra le tue applicazioni e l'API Anthropic, espone
-un'interfaccia **compatibile OpenAI** e riduce la spesa in token.
+Gateway locale che si mette tra le tue applicazioni e l'API Anthropic, e riduce
+la spesa in token.
 
-Le applicazioni non vanno riscritte: si cambia `base_url` e basta.
+**Parla solo con Claude.** Non c'è nessun provider OpenAI nel progetto: tutto
+quello che fa — prompt caching a match di prefisso, `output_config.effort`,
+`context_management` — esiste solo sull'API Anthropic.
+
+Accetta però **due dialetti in ingresso**, perché il valore sta nel non dover
+riscrivere le applicazioni:
+
+| Porta | Per chi |
+|---|---|
+| `POST /v1/chat/completions` | applicazioni che parlano il protocollo OpenAI: si cambia `base_url` e basta |
+| `POST /v1/messages` | client che parlano già il dialetto nativo di Claude |
+
+```
+la tua app  ──►  EcoTokens  ──►  API Anthropic  ──►  Claude
+             (due porte)      (l'unico provider)
+```
+
+"Compatibile OpenAI" descrive la forma della porta, non la destinazione.
 
 ```python
 from openai import OpenAI
@@ -28,10 +45,11 @@ stadi di ottimizzazione (vedi [Misurare, invece di credere](#misurare-invece-di-
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
 | **Prompt caching automatico** | fino al 90% sui token di prefisso riletti | nessuno |
-| **Effort adattivo** | taglia i token di ragionamento sulle richieste semplici | nessuno |
+| **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno al default |
 | **Potatura del contesto** | difesa contro l'overflow, non un risparmio | può azzerare il caching |
-| **Compattazione con riassunto** | sostituisce la cronologia vecchia con un riassunto stabile | perdita di dettaglio |
-| **Cache esatta** | richieste identiche servite a costo zero | nessuno |
+| **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
+| **Riscrittura del prompt** | −11% su prompt scritti in modo prolisso, 0,2% sul corpus completo | cambia il testo, non il senso |
+| **Cache esatta** | richieste identiche servite a costo zero; **−56%** quando differiscono solo per spaziatura | nessuno |
 | **Cache semantica** *(spenta)* | richieste simili servite a costo zero | può restituire risposte sbagliate |
 | **Declassamento di modello** *(spento)* | modello meno costoso sulle richieste semplici | azzera la cache, vedi sotto |
 
@@ -136,11 +154,62 @@ repository:
 | chat, 8 turni con system prompt grande | $0,4359 | $0,1283 | **71%** | 86% |
 | ciclo agentico, 6 turni da 6 tool | $0,6249 | $0,3195 | **49%** | 73% |
 | domande frequenti ripetute | $0,3779 | $0,0509 | **86%** | 73% |
-| costruzione di EcoTokens | $2,9926 | $0,8255 | **72%** | 90% |
-| **totale** | **$4,4312** | **$1,3242** | **70%** | 87% |
+| prompt verbosi, 8 turni | $0,3338 | $0,1855 | **44%** | 82% |
+| costruzione di EcoTokens | $3,8321 | $0,9980 | **74%** | 90% |
+| **totale** | **$5,6045** | **$1,6823** | **70%** | 87% |
 
 Lo scenario `costruzione` non è inventato: legge i sorgenti veri del progetto e
 ricostruisce il traffico che un agente di codice produce scrivendolo.
+
+#### La porta nativa
+
+I client che parlano già il dialetto di Claude non hanno bisogno di nessuna
+traduzione: passando dalla porta OpenAI si farebbero tradurre due volte per
+tornare al punto di partenza.
+
+```bash
+curl http://localhost:8000/v1/messages -H "Content-Type: application/json"   -d '{"model":"claude-opus-5","messages":[{"role":"user","content":"ciao"}],"max_tokens":1024}'
+```
+
+La risposta esce in formato Anthropic — `type`, `content`, `stop_reason` — non
+in formato OpenAI. Lo streaming ritrasmette gli eventi dell'API così come
+arrivano (`message_start`, `content_block_delta`, `message_stop`).
+
+Qui il gateway fa *meno* lavoro, non di più: la pipeline lavora già in formato
+Anthropic, quindi non c'è traduzione né all'andata né al ritorno. Restano tre
+cose, le stesse dell'altra porta: risolvere l'alias del modello, togliere i
+parametri di campionamento che i modelli attuali rifiutano con un 400, e
+applicare i valori predefiniti dove il client tace.
+
+**Le due porte condividono la cache.** La chiave si calcola sui parametri
+Anthropic, dopo la traduzione, e riduce il contenuto a una forma canonica: una
+stringa e un blocco di testo singolo sono la stessa cosa per l'API, quindi la
+stessa domanda posta nei due dialetti costa una volta sola. Anche la risposta
+viene salvata in formato Anthropic, e tradotta in uscita solo per chi ha chiesto
+in dialetto OpenAI.
+
+Il corpo non viene validato campo per campo di proposito: riprodurre lo schema
+Anthropic qui dentro significherebbe mantenerne una copia che invecchia, e
+rifiutare parametri che l'API magari accetta già.
+
+*Non provato:* in teoria un client nativo configurabile via `ANTHROPIC_BASE_URL`
+potrebbe passare dal gateway. Non l'ho verificato con nessuno in particolare.
+
+### Calibrare contro l'API vera
+
+Tutti i numeri di questo README vengono dal simulatore. Per sapere quanto è
+largo lo scarto con la realtà senza spendere una fortuna, conviene partire da un
+solo scenario:
+
+```bash
+ecotokens bench --live --scenario chat
+```
+
+Il comando dice quante richieste sta per fare e chiede conferma prima di
+spendere. La misura finisce in un corpus separato, così un sottoinsieme non
+viene confrontato con la serie completa — cambierebbe il denominatore di tutte
+le percentuali. Servono credenziali: senza, il comando si ferma prima di
+spendere e spiega come impostarle.
 
 I numeri vengono dal simulatore incluso nel pacchetto. La meccanica della cache
 è fedele — match di prefisso, finestra di lookback di venti blocchi, marker
@@ -159,9 +228,10 @@ precedente è il contributo di quello stadio.
 
 | Stadio | Contributo |
 |---|---:|
-| prompt caching | **60%** |
-| cache esatta | 6% |
-| effort adattivo | 2,5% |
+| prompt caching | **66,3%** |
+| effort adattivo | 3,5% |
+| cache esatta | 2,3% |
+| riscrittura del prompt | 0,2% |
 | potatura del contesto | 0% (non interviene mai con la soglia predefinita) |
 
 ### Due ottimizzazioni che litigano
@@ -176,6 +246,175 @@ di taglio a ogni turno: il prefisso cambia e il prompt caching salta. Misurato:
 
 Per questo la potatura resta una difesa contro l'esaurimento della finestra di
 contesto, non un modo per risparmiare, e la sua soglia resta alta.
+
+### Comprimere la cronologia: conviene solo a una condizione
+
+```bash
+ecotokens compaction
+```
+
+Sostituire la cronologia vecchia con un riassunto sembra un risparmio ovvio, e
+sui numeri non lo e' affatto. Il riassunto sta all'inizio del prompt: se cambia,
+cambia il prefisso, e il prompt caching salta su *tutto* il resto. Misurato su
+una consulenza di quaranta turni, contro il non comprimere affatto:
+
+| Strategia | Costo | Da cache | Riassunti | Effetto |
+|---|---:|---:|---:|---:|
+| nessuna compattazione | $1,9479 | 95% | 0 | riferimento |
+| taglio a inseguimento | $2,7366 | 54% | 34 | **−40,5%** |
+| taglio a scatti | $1,7864 | 82% | 9 | +8,3% |
+| scatti + riassunto incrementale | $1,7555 | 82% | 9 | **+9,9%** |
+
+La colonna dei riassunti spiega tutto: un riassunto per turno è un prefisso
+nuovo per turno. Il punto di taglio quindi non insegue la coda della
+conversazione, avanza a scatti di 12 messaggi — valore scelto misurando una
+curva a U su conversazioni da 20, 40 e 60 turni. Quando lo scatto avanza, il
+riassunto nuovo riparte da quello vecchio invece di rileggere tutta la
+cronologia.
+
+Il costo del riassuntore è contato: è una chiamata a un modello, e senza
+addebitarla la compattazione risulterebbe gratuita per costruzione.
+
+### Accorciare il prompt
+
+```bash
+ecotokens prompt
+```
+
+Tre livelli, in ordine di rischio crescente. Il primo non cambia una parola:
+toglie spazi ripetuti, righe vuote in eccesso, caratteri invisibili da copia e
+incolla, virgolette tipografiche — e lascia intatti i blocchi di codice
+recintati, dove l'indentazione è significato. Il secondo toglie le perifrasi che
+introducono un'istruzione senza aggiungerle nulla. Il terzo sostituisce parole
+con sinonimi più corti.
+
+| Livello | Costo | Token tolti | vs originale |
+|---|---:|---:|---:|
+| prompt originale | $0,1855 | 0 | riferimento |
+| normalizzazione | $0,1832 | 924 | +1,3% |
+| + formule di riempimento | $0,1731 | 8.704 | +6,7% |
+| + sostituzioni lessicali | $0,1647 | 14.864 | +11,3% *(non validato)* |
+
+Due cose vanno dette su questi numeri, perché senza si leggono male.
+
+**La resa è un quarto di quello che sembra.** Togliere mille token dal prompt
+rende circa **$0,0014**, contro i $0,0050 che quegli stessi token costerebbero a
+prezzo pieno su Opus 5. La differenza è lo sconto che il prompt caching aveva
+già fatto. Vale anche per la scelta di *dove* tagliare: system e messaggi utente
+rendono $0,00125 e $0,00160 per mille token, perché in una conversazione a più
+turni finiscono entrambi nel prefisso servito da cache.
+
+**Un livello è marcato "non validato", e resta spento.** Il banco conta i token
+dalla lunghezza del testo. Va bene per chiedersi *dove* finiscono i token tolti,
+perché lì conta la tariffa a cui vengono fatturati. Non va bene per chiedersi se
+«usare» costi davvero meno token di «utilizzare»: quello lo sa solo
+`messages.count_tokens`, e sotto una metrica basata sui caratteri qualunque
+accorciamento sembra un guadagno *per costruzione*. Le sostituzioni lessicali
+restano quindi disattivate finché il tokenizer vero non le ha confermate:
+
+```bash
+ecotokens substitutions --live
+```
+
+Ogni candidato viene contato prima e dopo, l'esito finisce in tabella per
+modello, e quelli bocciati restano inerti. Senza questo passaggio
+`prompt.only_verified` impedisce allo stadio di applicarne alcuno.
+
+**La cache non si muove.** Su tutte le varianti la quota di prompt servita da
+cache resta all'82%: le riscritture sono deterministiche e idempotenti, quindi
+la cronologia che il client rispedisce a ogni turno viene riscritta sempre allo
+stesso modo. Una riscrittura instabile qui varrebbe meno di zero — è lo stesso
+errore già trovato nella compattazione.
+
+### La chiave della cache
+
+```bash
+ecotokens cachekey
+```
+
+Due richieste che differiscono per uno spazio doppio, una riga vuota o una
+virgoletta tipografica sono la stessa domanda. Con la chiave calcolata sui byte
+grezzi finiscono su voci diverse, e la stessa risposta si paga tante volte
+quante sono le varianti.
+
+| Carico | Chiave | Costo | Hit |
+|---|---|---:|---:|
+| domande ripetute, spaziatura variabile | byte grezzi | $0,2759 | 0/12 |
+| domande ripetute, spaziatura variabile | testo normalizzato | $0,1213 | **8/12** |
+| domande ripetute identiche | byte grezzi | $0,0869 | 8/12 |
+| domande ripetute identiche | testo normalizzato | $0,0869 | 8/12 |
+
+**−56%** sul primo carico, nessuna differenza sul secondo — che è la verifica
+che serviva: la normalizzazione allarga la cache, non la rende cieca. È
+l'ottimizzazione con la resa più alta di tutto il gateway, e la ragione è
+aritmetica: ogni altra leva sconta il prezzo di un token, un hit di cache lo
+azzera. Il prompt caching serve un token a 0,1×; la cache esatta non lo serve
+affatto.
+
+Stessa normalizzazione prima di calcolare gli embedding della cache semantica.
+
+### Il testo che aggiunge il gateway
+
+```bash
+ecotokens overhead
+```
+
+Il gateway non si limita a inoltrare: aggiunge testo suo. Delimitatori attorno
+al riassunto della cronologia, un blocco per i fatti ricordati, un'istruzione
+quando il client chiede JSON, le regole date al riassuntore. Sono token che
+l'utente paga senza averli scritti, e sparsi per il codice non li contava
+nessuno.
+
+Raccolti in [wording.py](ecotokens/wording.py) con la formulazione precedente
+accanto, così il guadagno è verificabile invece che dichiarato: **254 → 174
+token per occorrenza, il 31% in meno**. `<riassunto-conversazione-precedente>`
+costava 22 token per delimitare ciò che `<storico>` delimita con 6.
+
+A differenza del prompt dell'utente, questo testo è nostro: accorciarlo non
+cambia il comportamento di nessuna applicazione. Ma va detto onestamente che
+sono token *per occorrenza*, non per richiesta, e sulla fattura incidono poco.
+È stato fatto perché è gratis e senza rischio, non perché sposti l'ago.
+
+### Un parametro che sembra da ottimizzare e non lo è
+
+`keep_recent_messages` decide quanti messaggi restano integrali invece di finire
+nel riassunto. Misurando, il costo scende in modo monotono man mano che si
+abbassa: su cinquanta turni, tenerne 4 costa $1,86 e tenerne 24 costa $3,39.
+
+Non è una scoperta, è una tautologia — comprimere di più costa sempre meno — e
+il banco non ha nulla da dire sulla **qualità** della risposta, che è
+esattamente ciò che si perde. Il valore resta 8 per fedeltà, non per costo: è un
+giudizio, non un ottimo misurato. Chi lo abbassa scambia soldi contro dettaglio,
+e ora sa di farlo.
+
+### L'effort sui turni con tool
+
+Il router rifiutava in blocco di abbassare l'effort appena c'erano tool
+dichiarati. Contando quante volte lo stadio interveniva davvero: **12 richieste
+su 51**, e il blocco dominante non era la soglia sulla domanda ma quel veto —
+23 richieste, il 45% del traffico, incluso il carico di costruzione che da solo
+vale il 61% della spesa.
+
+La distinzione giusta non è «ci sono tool dichiarati» ma «il modello deve
+decidere se e quale usarne»: con `tool_choice: none` i tool ci sono e sono
+inutilizzabili, e trattare quel caso come agentico costava effort per niente.
+
+| Regola | Costo totale | vs prima |
+|---|---:|---:|
+| veto in blocco (com'era) | $1,7387 | riferimento |
+| nessun veto, effort `low` | $1,5407 | **+11,4%** |
+| nessun veto, effort `medium` | $1,6938 | +2,6% |
+
+**Il default è `medium`, non `low`, e la ragione va detta.** Il banco modella la
+*lunghezza* della risposta in funzione dell'effort, non la sua *qualità*. Un
+effort basso su un turno agentico può produrre la chiamata sbagliata, e un
+tentativo in più costa più di quanto l'effort abbia risparmiato. Quel rischio
+qui non è misurabile, quindi il default prende la parte sicura del premio e
+l'11,4% pieno resta una scelta esplicita (`router.effort_with_tools = "low"`)
+con il rischio scritto accanto.
+
+Il veto resta invece intatto per il **cambio di modello**: lì sbagliare la
+scelta di un tool non si paga in token ma in tentativi.
 
 ### Trovare la configurazione migliore
 
@@ -194,13 +433,23 @@ ecotokens dashboard
 
 Genera una pagina HTML autonoma con tutti i parametri: confronto con e senza
 gateway, dove finiscono i token di prompt, contributo di ogni stadio,
-interazioni fra stadi, storico delle misure e registro delle correzioni. Il
-gateway la serve anche su `/admin/dashboard`.
+interazioni fra stadi, strategie di compattazione, livelli di riscrittura del
+prompt, storico delle misure e registro delle correzioni. Il gateway la serve
+anche su `/admin/dashboard`.
+
+Include una sezione **Progressi rispetto alla versione precedente**: ogni
+ottimizzazione confrontata con la misura precedente dello stesso corpus, con la
+variazione del suo contributo e l'esito (`migliorato`, `peggiorato`,
+`invariato`, `nuovo`). Il confronto è limitato a misure dello stesso corpus di
+scenari, ed è un vincolo sostanziale: aggiungere uno scenario cambia il
+denominatore di tutte le percentuali, e accostare corpus diversi mostrerebbe
+progressi che non ci sono stati. Per questo il corpus è versionato (`v2` da
+quando esiste lo scenario dei prompt verbosi).
 
 ### Cosa è cambiato misurando
 
 Il registro completo è in [tuning_log.py](ecotokens/tuning_log.py). In sintesi,
-tre difetti del *metro* e due del *gateway*:
+sette difetti del *metro* e otto del *gateway*:
 
 - Il marker `cache_control` finiva dentro l'impronta del prefisso del
   simulatore. La misura dava il gateway per dannoso (+6,6% di costo); corretta
@@ -218,28 +467,61 @@ tre difetti del *metro* e due del *gateway*:
   scrittura la rilegge la richiesta successiva di chiunque. Invertito il default,
   il risparmio complessivo passa dal 68% al 70%, e su venti richieste isolate che
   condividono il system prompt la differenza è del 155%.
+- Il punto di taglio della compattazione inseguiva la coda della conversazione,
+  quindi si spostava a ogni turno: il riassunto veniva rifatto ogni volta,
+  diverso ogni volta, e il prefisso cambiava sempre. Su quaranta turni la
+  compattazione costava il **40,5% più** del non comprimere affatto. Il codice
+  memorizzava il riassunto per riusarlo, ma la chiave conteneva il punto di
+  taglio: una chiave che si muove con la conversazione non combacia mai. Il test
+  lo verificava a cronologia ferma, l'unico caso in cui funzionava.
+- La spesa delle chiamate che il gateway fa per conto proprio — il riassunto di
+  compattazione — non era contata da nessuna parte: non compare in
+  `response.usage` della richiesta dell'utente. Uno stadio che sembra gratuito
+  viene acceso quando non conviene.
+- Il simulatore ignorava `max_tokens`, quindi qualunque tetto imposto dal
+  gateway era invisibile alla misura. Corretto: e la misura dice che il tetto sul
+  riassunto non morde mai su questi carichi. Resta come paracadute, non come
+  risparmio.
+- Accorciare il prompt rende circa **un quarto** di quello che sembra: quasi
+  tutti i token tolti sarebbero comunque stati serviti dalla cache a un decimo
+  del prezzo. Lo stadio resta utile su prompt scritti male (−11%), marginale sul
+  corpus completo (0,2%), ed è documentato per quello che è.
+- Il risparmio in token delle sostituzioni lessicali **non è misurabile qui**:
+  il banco conta i token dai caratteri, quindi una tabella di sinonimi più corti
+  si autoconfermerebbe. Restano spente finché `ecotokens substitutions --live`
+  non le confronta col conteggio vero.
+- La chiave della cache esatta si calcolava sui byte grezzi, quindi due
+  richieste uguali a meno di uno spazio finivano su voci diverse. Il
+  riconoscimento di sessione normalizzava già la spaziatura; la cache no, e non
+  se n'era accorto nessuno perché tutti gli scenari ripetevano le domande
+  identiche. Corretto: **−56%** su un carico con spaziatura variabile.
+- `keep_recent_messages` sembra un parametro da ottimizzare e non lo è: il costo
+  scende sempre abbassandolo, ma quello che si perde — la qualità della
+  risposta — il banco non lo misura. Qui la misura era corretta e rispondeva a
+  una domanda diversa da quella che sembrava.
 
 ## Come funziona dentro
 
 ```
-Client OpenAI ─► FastAPI /v1/chat/completions
-                     │
-                     ▼  traduzione + sanificazione OpenAI → Anthropic
-                     │
+Client OpenAI ─► /v1/chat/completions ─┐
+                                       │  traduzione + sanificazione
+Client nativo ─► /v1/messages ─────────┤  (solo per il dialetto OpenAI)
+                                       │
   1. sessione        │  riconosce a quale conversazione appartiene
   2. cache esatta    │──► hit: risposta immediata, zero token
   3. cache semantica │──► hit: risposta immediata, zero token
   4. budget          │──► blocco se il tetto di spesa è superato
-  5. memoria         │  inietta in coda i fatti pertinenti
-  6. contesto        │  pota i tool result, riassume la parte vecchia
-  7. router          │  abbassa l'effort, sceglie il modello
-  8. cache planner   │  piazza i breakpoint cache_control
+  5. prompt          │  riscrive il testo in forma più concisa
+  6. memoria         │  inietta in coda i fatti pertinenti
+  7. contesto        │  pota i tool result, riassume la parte vecchia
+  8. router          │  abbassa l'effort, sceglie il modello
+  9. cache planner   │  piazza i breakpoint cache_control
                      ▼
               API Anthropic
                      │
-  9. contabilità     │  usage reale → costo, risparmio, cache hit rate
+ 10. contabilità     │  usage reale → costo, risparmio, cache hit rate
                      ▼
-        traduzione Anthropic → OpenAI (streaming incluso)
+   risposta nel dialetto di chi ha chiesto (streaming incluso)
 ```
 
 L'ordine non è casuale. Il budget sta **dopo** le cache perché una risposta
@@ -316,6 +598,11 @@ poi la cache venga davvero letta.
 | `ecotokens bench` | misura lo stesso carico con e senza gateway |
 | `ecotokens ablate` | attribuisce il risparmio a ciascuno stadio |
 | `ecotokens optimize` | prova più configurazioni e consiglia la migliore |
+| `ecotokens compaction` | confronta le strategie di compattazione della cronologia |
+| `ecotokens prompt` | misura i livelli di riscrittura del prompt |
+| `ecotokens substitutions` | verifica quali sinonimi costano davvero meno token |
+| `ecotokens cachekey` | misura l'effetto della normalizzazione sulla chiave di cache |
+| `ecotokens overhead` | mostra il testo che il gateway aggiunge ai prompt |
 | `ecotokens dashboard` | genera la dashboard HTML |
 
 ## Endpoint
