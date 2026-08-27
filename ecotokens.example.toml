@@ -65,7 +65,12 @@ prune_keep_tool_uses = 3
 # riletta. Misurato: da -36,2% a +7,8% sul carico di costruzione.
 # L'unita' e' il turno e non il risultato perche' sei chiamate per turno
 # consumano uno scatto sei volte piu' in fretta di una.
-prune_step_turns = 4
+# Il valore e' 7 per una seconda misura (`ecotokens cachewrites`): ogni volta
+# che il confine avanza, cio' che il pianificatore aveva appena pagato 1,25x
+# per scrivere in cache non e' piu' raggiungibile. Con il solo pianificatore le
+# scritture orfane sono zero; a passo 4 sono 16.999 token, a passo 7 sono 4.509
+# e il costo e' anche l'1,1% piu' basso. Abbassarlo paga due volte.
+prune_step_turns = 7
 # Materiale potabile oltre il quale si pota anche senza pressione sulla
 # finestra. Misurato: 20.000 e' il minimo, e a 50.000 potare costa PIU' del non
 # potare (comincia troppo tardi e sposta il prefisso quando la cache valeva di

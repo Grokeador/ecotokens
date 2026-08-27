@@ -162,6 +162,15 @@ repository:
 Lo scenario `costruzione` non è inventato: legge i sorgenti veri del progetto e
 ricostruisce il traffico che un agente di codice produce scrivendolo.
 
+> **Il metro cresce con ciò che misura.** Quei sorgenti vengono letti *al momento
+> dell'esecuzione*, quindi ogni commit che allunga il codice cambia anche il
+> carico. Dentro una singola esecuzione il corpus è costante e i confronti fra
+> varianti reggono — sono quelli **fra esecuzioni diverse** a essere contaminati.
+> Misurato: fra due ablazioni distanti poche ore il riferimento è passato da
+> $6,3002 a $6,6338, un +5,3% che nessuna modifica al gateway aveva prodotto.
+> `CORPUS_VERSION` non se ne accorge, perché l'elenco degli scenari non cambia:
+> cambia il loro contenuto.
+
 #### La porta nativa
 
 I client che parlano già il dialetto di Claude non hanno bisogno di nessuna
@@ -336,6 +345,107 @@ Va detto chiaramente: sotto quella soglia si scambiano soldi misurati contro
 fedeltà che il banco non misura. Quel contesto prima restava integrale, ora i
 risultati di tool vecchi diventano un segnaposto. È `prune_min_prunable_tokens`,
 e alzarlo lo disattiva.
+
+### Le scritture in cache che nessuno rilegge
+
+L'ablazione dice che il prompt caching vale il **67%** del risparmio e che gli
+altri quattro stadi messi insieme valgono il **7%**. Da un certo punto in poi
+limare gli stadi piccoli significa contendersi un settimo di quello che vale il
+primo, e l'unica domanda che sposta qualcosa è se dentro quel 67% ci sia dello
+sprecato.
+
+Una scrittura in cache costa **1,25×** (cinque minuti) o **2×** (un'ora); una
+rilettura costa **0,1×**. Riletta anche una sola volta è già in guadagno. Mai
+riletta è una perdita netta pari al 25% del suo prezzo pieno: si è pagato di più
+per non avere niente in cambio. Il pianificatore piazza fino a quattro
+breakpoint per richiesta, e per molto tempo nessuno ha contato quanti rendano.
+
+```bash
+ecotokens cachewrites
+```
+
+| Tetto | Costo | Scritti | Ripagati | Orfani in mezzo | Orfani di coda |
+|---|---:|---:|---:|---:|---:|
+| pianificatore spento | $4,2992 | 0 | 0 | 0 | 0 |
+| 1 breakpoint | $3,8593 | 15.668 | 12.436 | 0 | 3.232 |
+| **2 breakpoint** | **$1,6686** | 142.077 | 129.221 | 4.509 | 8.347 |
+| 3 breakpoint | $1,6686 | 142.077 | 129.221 | 4.509 | 8.347 |
+| 4 breakpoint | $1,6686 | 142.077 | 129.221 | 4.509 | 8.347 |
+
+Le due colonne vanno lette insieme, e in quest'ordine: prima il costo, poi lo
+spreco. Lo spreco da solo si minimizza spegnendo il pianificatore, che è la riga
+più cara della tabella.
+
+#### Come si attribuisce una rilettura a una scrittura
+
+L'API non dice *quale* voce di cache ha letto. La ricostruzione poggia sul fatto
+che la cache è un match di prefisso, quindi le letture crescono da sinistra: se
+una richiesta successiva della stessa sessione legge più a fondo, la differenza
+può venire solo da ciò che si era scritto prima. Si guarda avanti dalla
+scrittura e ci si ferma alla prima di due cose: una lettura che la supera —
+ripagata — oppure una nuova scrittura che riparte da un punto a monte, e allora
+la precedente non è più raggiungibile da nessuno.
+
+La prima versione di questa regola prendeva semplicemente la lettura più
+profonda fra tutte le successive, e accreditava due volte la stessa rilettura:
+lo spreco misurato risultava del 9,0% invece del 20,0%. L'ha trovata un test, ed
+è la decima voce del registro classificata come difetto del **metro**.
+
+#### Perché gli orfani "di coda" restano separati
+
+L'ultima scrittura di una sessione non ha, per definizione, una richiesta dopo
+di sé. Non è un difetto del pianificatore: è il prezzo di non sapere in anticipo
+che la conversazione finiva lì. Può inoltre essere riletta da un'altra sessione
+che condivide il prefisso di sistema, cosa che questo conto — che guarda una
+sessione alla volta — non vedrebbe. Sommarla agli orfani "in mezzo" darebbe un
+numero più grosso e meno utile: si agirebbe su una quota che in parte non
+dipende da nessuna decisione del gateway.
+
+#### Cosa ha trovato
+
+**Il pianificatore, da solo, non lascia orfana nessuna scrittura a metà
+sessione.** Tutte le scritture orfane vengono dalla potatura: ogni volta che il
+confine avanza il prefisso cambia, e ciò che si era appena pagato 1,25× per
+scrivere diventa irraggiungibile.
+
+| `prune_step_turns` | Costo | Orfani in mezzo |
+|---|---:|---:|
+| solo pianificatore, niente potatura | $2,1258 | **0** |
+| 4 (il vecchio default) | $1,6879 | 16.999 |
+| 5 | $1,6646 | 12.823 |
+| **7** | **$1,6686** | **4.509** |
+| 8 | $1,6831 | 4.434 |
+
+Il default passa da 4 a **7**: −73% di scritture orfane e −1,1% di costo. Il
+vecchio valore era dominato su entrambi gli assi, quindi non c'è stato niente da
+bilanciare.
+
+Fra 5 e 8 il costo oscilla dell'1% senza andamento — 5 basso, 6 alto, 7 basso, 8
+alto. Sono effetti discreti del confine, non una tendenza, e leggerli come tale
+sarebbe adattarsi al corpus; dentro quel tratto si sceglie perciò il valore che
+lascia meno orfani.
+
+#### Una cosa che il corpus non misura
+
+Le righe a 2, 3 e 4 breakpoint danno numeri identici fino all'ultima cifra,
+perché **il gateway non arriva mai a usarne più di due**. I breakpoint intermedi
+si attivano solo quando la coda della conversazione supera i 20 blocchi di
+lookback: contati, sono 43 chiamate e zero marker piazzati, e la coda più lunga
+che il corpus produce ne ha 13.
+
+Non è stato tolto niente — il limite dei 20 blocchi è documentato, e un client
+agentico con dieci chiamate parallele per turno lo supera. Ma quello stadio
+resta **non misurato**, e vale la pena dirlo invece di lasciarlo intendere.
+Servirebbe uno scenario apposta, che però cambierebbe `CORPUS_VERSION` e
+azzererebbe i confronti storici.
+
+#### Sul traffico vero
+
+Lo stesso conto gira sui dati del ledger, non solo sul simulatore: `ecotokens
+stats` e la dashboard lo mostrano appena c'è traffico registrato. È per questo
+che `usage_events` porta ora una colonna `cache_ttl` — senza sapere con quale
+TTL una scrittura è stata pagata, il costo di una scrittura a un'ora verrebbe
+calcolato come se fosse a cinque minuti, cioè un quarto del vero.
 
 ### Comprimere la cronologia: conviene solo a una condizione
 
@@ -694,6 +804,7 @@ poi la cache venga davvero letta.
 | `ecotokens cachekey` | misura l'effetto della normalizzazione sulla chiave di cache |
 | `ecotokens overhead` | mostra il testo che il gateway aggiunge ai prompt |
 | `ecotokens pruning` | confronta le strategie di potatura del contesto |
+| `ecotokens cachewrites` | conta le scritture in cache che nessuno rilegge |
 | `ecotokens dashboard` | genera la dashboard HTML |
 
 ## Endpoint

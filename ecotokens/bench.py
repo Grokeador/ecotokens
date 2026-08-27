@@ -32,6 +32,7 @@ import anthropic
 import httpx2
 
 from .api.schemas import ChatCompletionRequest
+from .cache_audit import CacheEvent, CacheWriteAudit, audit_cache_writes
 from .config import Settings
 from .pipeline.base import SOURCE_API
 from .simulator import create_stub
@@ -195,9 +196,20 @@ ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
 
 
 async def _run_scenario(
-    scenario: Scenario, settings: Settings, variant: str, *, live: bool
+    scenario: Scenario,
+    settings: Settings,
+    variant: str,
+    *,
+    live: bool,
+    raccolta: list[CacheEvent] | None = None,
 ) -> Measurement:
-    """Esegue uno scenario su un gateway appena creato e ne misura l'esito."""
+    """Esegue uno scenario su un gateway appena creato e ne misura l'esito.
+
+    Con ``raccolta`` si porta via anche la sequenza dei contatori di cache di
+    ogni richiesta, che serve a ricostruire quali scritture sono state poi
+    rilette (vedi ``cache_audit``). E' una lista in ordine cronologico: i
+    conti di quel modulo dipendono dall'ordine.
+    """
     from .server import Gateway  # importazione locale: evita un ciclo di import
 
     gateway = Gateway(settings)
@@ -230,6 +242,19 @@ async def _run_scenario(
             misura.full_price_tokens += ctx.usage.input_tokens
             misura.cost_usd += ctx.total_cost_usd
             misura.aux_cost_usd += ctx.aux_cost_usd
+
+            if raccolta is not None and ctx.source == SOURCE_API:
+                # Solo le richieste arrivate davvero all'API: un hit della
+                # cache locale non tocca la cache di Anthropic.
+                raccolta.append(
+                    CacheEvent(
+                        session_id=ctx.session_id or f"{scenario.name}:{variant}",
+                        read_tokens=ctx.usage.cache_read_tokens,
+                        write_tokens=ctx.usage.cache_creation_tokens,
+                        model=ctx.model,
+                        cache_ttl=ctx.cache_ttl,
+                    )
+                )
     finally:
         await gateway.shutdown()
 
@@ -1020,6 +1045,78 @@ async def measure_cache_key(*, live: bool = False) -> list[CacheKeyVariant]:
                     upstream_calls=misura.upstream_calls,
                 )
             )
+    return esiti
+
+
+@dataclass
+class CacheWriteVariant:
+    """Costo e spreco del pianificatore a parita' di tutto il resto."""
+
+    etichetta: str
+    breakpoints: int
+    cost_usd: float
+    audit: CacheWriteAudit
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "etichetta": self.etichetta,
+            "breakpoints": self.breakpoints,
+            "cost_usd": self.cost_usd,
+            **self.audit.to_dict(),
+        }
+
+
+async def measure_cache_writes(*, live: bool = False) -> list[CacheWriteVariant]:
+    """Quante delle scritture in cache vengono davvero rilette.
+
+    Nasce da una constatazione dell'ablazione: il prompt caching vale il 67%
+    del risparmio e gli altri quattro stadi insieme il 7%. Continuare a
+    limare gli stadi piccoli significa contendersi un settimo di quello che
+    vale il primo; l'unica domanda che sposta qualcosa e' se dentro quel 67%
+    ci sia dello sprecato.
+
+    Il confronto abbassa il tetto dei breakpoint da quattro a uno, con tutto
+    il resto identico, e per ognuno riporta **due** numeri: quanto e' costato
+    e quanto ha buttato. Servono entrambi, e nell'ordine giusto: lo spreco da
+    solo si minimizza spegnendo il pianificatore, che e' la configurazione
+    peggiore di tutte. Un tetto piu' basso conviene solo se lo spreco scende
+    *senza* che il costo salga.
+
+    Il gradino "pianificatore spento" e' li' proprio a ricordarlo: zero
+    scritture, zero sprecato, e il conto piu' salato del gruppo.
+    """
+    scenari = all_scenarios()
+
+    def _con_tetto(settings: Settings, tetto: int) -> None:
+        _abilita_router(settings)
+        settings.cache_planner.max_breakpoints = tetto
+
+    def _spento(settings: Settings) -> None:
+        _abilita_router(settings)
+        settings.cache_planner.enabled = False
+
+    gradini: list[tuple[str, int, Callable[[Settings], None]]] = [("spento", 0, _spento)]
+    for tetto in (1, 2, 3, 4):
+        etichetta = str(tetto) + (" (attuale)" if tetto == 4 else "")
+        gradini.append((etichetta, tetto, lambda s, t=tetto: _con_tetto(s, t)))
+
+    esiti: list[CacheWriteVariant] = []
+    for etichetta, tetto, applica in gradini:
+        eventi: list[CacheEvent] = []
+        costo = 0.0
+        for scenario in scenari:
+            misura = await _run_scenario(
+                scenario, make_settings(applica), etichetta, live=live, raccolta=eventi
+            )
+            costo += misura.cost_usd
+        esiti.append(
+            CacheWriteVariant(
+                etichetta=etichetta,
+                breakpoints=tetto,
+                cost_usd=costo,
+                audit=audit_cache_writes(eventi),
+            )
+        )
     return esiti
 
 

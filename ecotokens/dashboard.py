@@ -27,6 +27,7 @@ from .bench import (
     gateway_overhead,
     load_runs,
     measure_cache_key,
+    measure_cache_writes,
     measure_compaction,
     measure_prompt_optimization,
     measure_pruning,
@@ -197,11 +198,15 @@ async def build_dashboard_data(
                 for voce in chiavi
             ]
 
+            scritture = await measure_cache_writes()
+            dati["cache_writes"] = [voce.to_dict() for voce in scritture]
+
             dati["progress"] = await stage_progress(store, dati["stages"])
 
         dati["history"] = _summarise_history(await load_runs(store, limit=12))
         dati["live"] = await _live_traffic(store)
         dati["calibration"] = await store.estimate_calibration()
+        dati["cache_writes_live"] = await store.cache_write_report()
     finally:
         database.close()
 
@@ -336,6 +341,7 @@ def _body(data: dict[str, Any]) -> str:
         _prompt(data),
         _cache_key(data),
         _overhead(data),
+        _cache_writes(data),
         _calibration(data),
         _progress(data),
         _tuning(data),
@@ -838,6 +844,103 @@ def _overhead(data: dict[str, Any]) -> str:
   </div>
 </section>"""
 
+
+def _cache_writes(data: dict[str, Any]) -> str:
+    """Quanto del prompt caching e' scritto e mai riletto.
+
+    E' la sezione nata da una constatazione aritmetica: il prompt caching vale
+    il 67% del risparmio e gli altri quattro stadi insieme il 7%. Da un certo
+    punto in poi, l'unico posto dove cercare ancora e' dentro il 67%.
+    """
+    righe_dati = data.get("cache_writes") or []
+    if not righe_dati:
+        return ""
+
+    vero = data.get("cache_writes_live") or {}
+
+    con_tetto = [voce for voce in righe_dati if voce["breakpoints"]]
+    minimo = min((voce["cost_usd"] for voce in con_tetto), default=0.0)
+
+    righe = []
+    for voce in righe_dati:
+        scritti = voce["token_scritti"]
+        quota = voce["quota_sprecata"]
+        # Il verde va al costo piu' basso, non allo spreco piu' basso: lo
+        # spreco minimo e' della riga che non scrive niente, ed e' la peggiore.
+        economico = bool(voce["breakpoints"]) and abs(voce["cost_usd"] - minimo) < 1e-9
+        stato = "good" if voce["token_sprecati_in_mezzo"] == 0 else "idle"
+        etichetta = _esc(voce["etichetta"])
+        if not voce["breakpoints"]:
+            etichetta = f'{etichetta} <span class="muted">(pianificatore off)</span>'
+        righe.append(
+            f"""<tr>
+      <td class="stage-name">{etichetta}</td>
+      <td class="num mono{' win' if economico else ''}">{_fmt_usd(voce['cost_usd'])}</td>
+      <td class="num mono">{_fmt_int(scritti)}</td>
+      <td class="num mono">{_fmt_int(voce['token_recuperati'])}</td>
+      <td class="num"><span class="pill pill-{stato}">{_fmt_int(voce['token_sprecati_in_mezzo'])}</span></td>
+      <td class="num mono muted">{_fmt_int(voce['token_sprecati_di_coda'])}</td>
+      <td class="num mono">{_fmt_pct(quota)}</td>
+    </tr>"""
+        )
+
+    if vero.get("scritture"):
+        nota_vera = (
+            f"""<p>Sul traffico vero registrato finora: <strong>{_fmt_int(vero['token_scritti'])}</strong>
+    token scritti in cache, di cui <strong>{_fmt_int(vero['token_sprecati_in_mezzo'])}</strong>
+    orfani in mezzo e {_fmt_int(vero['token_sprecati_di_coda'])} di coda, per un sovrapprezzo
+    di {_fmt_usd(vero['costo_sprecato_usd'])} su {_fmt_int(vero['sessioni'])} sessioni.</p>"""
+        )
+    else:
+        nota_vera = (
+            """<p class="caveat">Sul traffico vero: <strong>nessuna scrittura registrata</strong>.
+    La tabella qui sopra viene dal simulatore, e il simulatore non ha mai visto una
+    cache vera. Vale come confronto fra configurazioni, non come misura di quanto si
+    stia sprecando adesso.</p>"""
+        )
+
+    return f"""<section class="panel">
+  <div class="panel-head">
+    <h2>Le scritture che nessuno rilegge</h2>
+    <p>Una scrittura in cache costa <strong>1,25×</strong> (cinque minuti) o <strong>2×</strong>
+    (un'ora); una rilettura costa <strong>0,1×</strong>. Riletta anche una sola volta, una
+    scrittura è già in guadagno. Mai riletta, è una perdita netta pari al 25% del suo
+    prezzo pieno: si è pagato di più per non avere niente in cambio.</p>
+    <p>L'API non dice <em>quale</em> voce ha riletto, ma la cache è un match di prefisso e
+    le letture crescono da sinistra: se una richiesta successiva della stessa sessione
+    legge più a fondo, la differenza può venire solo da ciò che si era scritto prima.
+    Si prende la lettura più favorevole al gateway, quindi questi numeri sono un
+    <strong>limite inferiore</strong> allo spreco.</p>
+    <p class="caveat">Le due colonne vanno lette insieme, e in quest'ordine: prima il costo,
+    poi lo spreco. Lo spreco da solo si azzera spegnendo il pianificatore — che è la riga
+    più cara della tabella. Un tetto più basso conviene solo se lo spreco scende
+    <em>senza</em> che il costo salga.</p>
+    {nota_vera}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Tetto di breakpoint</th>
+          <th class="num">Costo</th>
+          <th class="num">Token scritti</th>
+          <th class="num">Ripagati</th>
+          <th class="num">Orfani in mezzo</th>
+          <th class="num">Orfani di coda</th>
+          <th class="num">Spreco</th>
+        </tr>
+      </thead>
+      <tbody>
+    {"".join(righe)}
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><strong>Orfani in mezzo</strong> è l'unica quota su cui il pianificatore
+  possa fare qualcosa: è una scrittura che altre richieste hanno seguito senza mai
+  rileggerla. <strong>Di coda</strong> è l'ultima scrittura di una sessione, che nessuno
+  poteva sapere fosse l'ultima — e che un'altra sessione con lo stesso prefisso potrebbe
+  ancora rileggere. Sommarle darebbe un numero più grosso e meno utile.</p>
+</section>"""
 
 def _calibration(data: dict[str, Any]) -> str:
     """Quanto sbaglia lo stimatore locale, misurato contro il tokenizer vero."""
@@ -1343,6 +1446,15 @@ p { margin: 0; }
   border-left: 2px solid var(--idle); padding-left: .8rem;
   color: var(--ink-faint); font-size: .86rem;
 }
+/* Nota di lettura sotto una tabella: spiega cosa distingue due colonne. */
+p.note {
+  margin-top: 1rem; max-width: 72ch;
+  color: var(--ink-soft); font-size: .86rem; line-height: 1.55;
+}
+/* Il valore migliore di una colonna. Sta sul costo e mai sullo spreco: lo
+   spreco minimo appartiene alla riga che non scrive in cache, che e' la
+   configurazione peggiore. */
+.win { color: var(--good); font-weight: 600; }
 
 /* --- tabella stadi --- */
 .table-wrap { overflow-x: auto; }

@@ -89,7 +89,10 @@ class CachePlannerStage(BaseStage):
             ctx.params.get("system")
         )
         system = ctx.params.get("system")
-        if isinstance(system, list) and system and head_tokens >= minimum:
+        # Il tetto vale anche per il primo marker: senza questo controllo
+        # `max_breakpoints = 0` ne piazzava comunque uno, e la configurazione
+        # veniva ignorata in silenzio.
+        if placed < budget and isinstance(system, list) and system and head_tokens >= minimum:
             system[-1]["cache_control"] = dict(marker)
             placed += 1
             ctx.note(f"breakpoint su system+tools ({head_tokens} token stimati)")

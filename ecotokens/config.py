@@ -107,7 +107,20 @@ class ContextSettings(BaseModel):
     # stesso numero di risultati a velocita' diverse di sei volte. Misurato,
     # contando in risultati i due carichi volevano valori opposti; contando in
     # turni ne vogliono uno solo.
-    prune_step_turns: int = 4
+    #
+    # Il valore e' 7 e non 4 per una seconda misura, arrivata dopo (`ecotokens
+    # cachewrites`): ogni volta che il confine avanza, cio' che il
+    # pianificatore aveva appena scritto in cache non verra' mai riletto,
+    # perche' il prefisso e' cambiato. Con il solo pianificatore acceso le
+    # scritture orfane a meta' sessione sono **zero**; accendendo la potatura a
+    # passo 4 diventano 16.999 token. A passo 7 sono 4.509, e il costo e'
+    # l'1,1% piu' basso: il vecchio valore e' dominato su entrambi gli assi.
+    #
+    # Fra passo 5 e passo 8 il costo oscilla dell'1% senza andamento (5 basso,
+    # 6 alto, 7 basso, 8 alto): sono effetti discreti del confine, non una
+    # tendenza, e leggerli come tale sarebbe adattarsi al corpus. Dentro quel
+    # tratto si sceglie percio' il valore che lascia meno orfani.
+    prune_step_turns: int = 7
     # Materiale potabile oltre il quale si pota anche se la finestra non e'
     # sotto pressione. Risponde a "conviene", mentre `trigger_ratio` risponde a
     # "sono in pericolo": due domande diverse, che meritano due condizioni.

@@ -102,11 +102,12 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
                 await store.stats(),
                 await store.current_spend(),
                 await store.estimate_calibration(),
+                await store.cache_write_report(),
             )
         finally:
             database.close()
 
-    data, (today, month), taratura = asyncio.run(_collect())
+    data, (today, month), taratura, scritture = asyncio.run(_collect())
 
     if not data.get("requests"):
         console.print("[yellow]Nessuna richiesta registrata finora.[/]")
@@ -146,6 +147,7 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
         console.print(sources)
 
     _stampa_taratura(taratura)
+    _stampa_scritture(scritture)
 
     by_model = data.get("by_model") or []
     if by_model:
@@ -184,6 +186,42 @@ def _stampa_taratura(taratura: list) -> None:
             f"{minimo * 100:+.1f}% .. {massimo * 100:+.1f}%",
         )
     console.print(metro)
+
+
+def _stampa_scritture(conto: dict) -> None:
+    """Quante scritture in cache nessuna richiesta successiva ha riletto.
+
+    Una scrittura costa 1,25x o 2x e una rilettura 0,1x: riletta una volta e'
+    gia' in guadagno, mai riletta e' una perdita netta. Le due categorie di
+    spreco restano separate perche' solo una delle due dipende da una
+    decisione del gateway.
+    """
+    if not conto.get("scritture"):
+        return
+    tabella = Table(title="Scritture in cache mai rilette")
+    tabella.add_column("Voce")
+    tabella.add_column("Valore", justify="right")
+    tabella.add_row("Token scritti", f"{int(conto['token_scritti']):,}")
+    tabella.add_row("  ripagati da una rilettura", f"{int(conto['token_recuperati']):,}")
+
+    in_mezzo = int(conto["token_sprecati_in_mezzo"])
+    stile = "green" if in_mezzo == 0 else "yellow"
+    tabella.add_row(
+        "  orfani in mezzo (evitabili)", f"[{stile}]{in_mezzo:,}[/]"
+    )
+    tabella.add_row(
+        "  orfani di coda (fine sessione)", f"{int(conto['token_sprecati_di_coda']):,}"
+    )
+    tabella.add_row("Sovrapprezzo pagato", f"${conto['costo_sprecato_usd']:.4f}")
+    tabella.add_row("Sessioni osservate", f"{int(conto['sessioni']):,}")
+    console.print(tabella)
+    if in_mezzo:
+        console.print(
+            "[dim]Gli orfani \"in mezzo\" sono scritture che altre richieste hanno "
+            "seguito senza mai rileggerle: di solito e' un confine di potatura che "
+            "avanza troppo spesso. Vedi `ecotokens cachewrites`.[/]"
+        )
+
 
 @app.command()
 def purge(
@@ -634,6 +672,59 @@ def cachekey(
     console.print(
         "[dim]E' l'ottimizzazione con la resa piu' alta del gateway: ogni altra leva "
         "sconta il prezzo di un token, un hit di cache lo azzera.[/]"
+    )
+
+
+@app.command()
+def cachewrites(
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Conta le scritture in cache che nessuna richiesta successiva rilegge."""
+    if live:
+        esigi_credenziali()
+    from .bench import measure_cache_writes
+
+    esiti = asyncio.run(measure_cache_writes(live=live))
+
+    tabella = Table(title="Scritture in cache: quante vengono davvero rilette")
+    tabella.add_column("Tetto", no_wrap=True)
+    tabella.add_column("Costo", justify="right", no_wrap=True)
+    tabella.add_column("Scritti", justify="right", no_wrap=True)
+    tabella.add_column("Ripagati", justify="right", no_wrap=True)
+    tabella.add_column("Orfani\nin mezzo", justify="right", no_wrap=True)
+    tabella.add_column("Orfani\ndi coda", justify="right", no_wrap=True)
+    tabella.add_column("Extra", justify="right", no_wrap=True)
+
+    migliore = min((v.cost_usd for v in esiti if v.breakpoints), default=0.0)
+    for voce in esiti:
+        conto = voce.audit
+        costo = f"${voce.cost_usd:.4f}"
+        if voce.breakpoints and abs(voce.cost_usd - migliore) < 1e-9:
+            costo = f"[green]{costo}[/]"
+        in_mezzo = str(conto.token_sprecati_in_mezzo)
+        if conto.token_sprecati_in_mezzo:
+            in_mezzo = f"[yellow]{in_mezzo}[/]"
+        tabella.add_row(
+            voce.etichetta,
+            costo,
+            f"{conto.token_scritti:,}".replace(",", " "),
+            f"{conto.token_recuperati:,}".replace(",", " "),
+            in_mezzo,
+            str(conto.token_sprecati_di_coda),
+            f"${conto.costo_sprecato_usd:.5f}",
+        )
+    console.print(tabella)
+    console.print()
+    console.print(
+        "[dim]Le due colonne vanno lette insieme, e in quest'ordine: il costo prima, "
+        "lo spreco poi. Lo spreco da solo si azzera spegnendo il pianificatore, che e' "
+        "la riga piu' cara del gruppo.[/]"
+    )
+    console.print(
+        "[dim]\"In mezzo\" e' l'unica quota su cui si possa intervenire: e' una scrittura "
+        "che altre richieste hanno seguito senza rileggerla. \"Di coda\" e' l'ultima "
+        "scrittura di una sessione, che nessuno poteva sapere fosse l'ultima - e che "
+        "un'altra sessione con lo stesso prefisso potrebbe ancora rileggere.[/]"
     )
 
 

@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS usage_events (
     output_tokens           INTEGER NOT NULL DEFAULT 0,
     cache_creation_tokens   INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens       INTEGER NOT NULL DEFAULT 0,
+    -- TTL con cui la scrittura in cache e' stata pagata: 1.25x a cinque
+    -- minuti, 2x a un'ora. Senza questo, il costo di una scrittura mai
+    -- riletta si sbaglierebbe di quattro volte.
+    cache_ttl               TEXT NOT NULL DEFAULT '5m',
     cost_usd                REAL NOT NULL DEFAULT 0,
     baseline_cost_usd       REAL NOT NULL DEFAULT 0,
     saved_usd               REAL NOT NULL DEFAULT 0,
@@ -186,6 +190,29 @@ END;
 """
 
 
+# Colonne aggiunte dopo che lo schema era gia' in giro. `CREATE TABLE IF NOT
+# EXISTS` non tocca una tabella che esiste, quindi un database creato da una
+# versione precedente resterebbe senza - e le query nuove fallirebbero su di
+# esso invece che su un database vuoto, cioe' proprio dove i dati contano.
+COLONNE_AGGIUNTE: list[tuple[str, str, str]] = [
+    ("usage_events", "cache_ttl", "TEXT NOT NULL DEFAULT '5m'"),
+]
+
+
+def _aggiungi_colonne_mancanti(conn: sqlite3.Connection) -> None:
+    """Migrazione minima: aggiunge le colonne nuove alle tabelle esistenti.
+
+    SQLite non ha `ADD COLUMN IF NOT EXISTS`, quindi si guarda prima. Ogni
+    colonna qui elencata deve avere un default: le righe gia' scritte non
+    possono saperne il valore, e un default sbagliato e' comunque meglio di
+    una migrazione che si rifiuta di partire su un database pieno di storia.
+    """
+    for tabella, colonna, tipo in COLONNE_AGGIUNTE:
+        presenti = {riga[1] for riga in conn.execute(f"PRAGMA table_info({tabella})")}
+        if presenti and colonna not in presenti:
+            conn.execute(f"ALTER TABLE {tabella} ADD COLUMN {colonna} {tipo}")
+
+
 class Database:
     """Wrapper asincrono minimale attorno a sqlite3."""
 
@@ -208,6 +235,7 @@ class Database:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(SCHEMA)
+        _aggiungi_colonne_mancanti(conn)
         try:
             conn.executescript(FTS_SCHEMA)
             self.has_fts = True

@@ -359,4 +359,89 @@ TUNING_LOG: list[TuningEntry] = [
             "misurabile."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="La potatura pagava scritture di cache che nessuno avrebbe riletto",
+        finding=(
+            "Il pianificatore e la potatura sono stati misurati per un anno ognuno per conto "
+            "suo, e ognuno risultava in guadagno. Contando per la prima volta quante delle "
+            "scritture in cache vengono davvero rilette (`ecotokens cachewrites`) e' venuto "
+            "fuori che si ostacolano: con il solo pianificatore acceso le scritture orfane a "
+            "meta' sessione sono zero, accendendo la potatura a passo 4 diventano 16.999 "
+            "token. Ogni volta che il confine avanza, cio' che si era appena pagato 1,25x per "
+            "scrivere non e' piu' raggiungibile, perche' il prefisso e' cambiato."
+        ),
+        effect=(
+            "`prune_step_turns` passa da 4 a 7: le scritture orfane calano a 4.509 (-73%) e il "
+            "costo scende dell'1,1%. Il vecchio valore era dominato su entrambi gli assi, "
+            "quindi non c'e' stato niente da bilanciare. E' la quarta volta che in questo "
+            "progetto un confine che insegue la coda si rivela costoso, ma la prima da questo "
+            "lato: non 'la cache non trova', bensi' 'si e' pagato di piu' per scrivere "
+            "qualcosa che nessuno leggera'."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Il conto delle scritture orfane accreditava due volte la stessa rilettura",
+        finding=(
+            "La prima versione dell'attribuzione prendeva, per ogni scrittura, la lettura piu' "
+            "profonda fra tutte le successive della sessione. Su una sequenza in cui il "
+            "prefisso riparte da zero e viene riscritto, quella regola dava per ripagata anche "
+            "la scrittura precedente, che invece era gia' morta: una sola rilettura ne "
+            "giustificava due. L'ha trovata un test scritto sul comportamento atteso, non "
+            "sull'implementazione."
+        ),
+        effect=(
+            "La regola si ferma ora alla prima scrittura successiva che riparte da un punto a "
+            "monte, perche' da li' in poi la precedente e' irraggiungibile. Lo spreco "
+            "misurato sul corpus sale dal 9,0% al 20,0% a passo 4 - il gateway non e' "
+            "cambiato, era il conto a essere troppo generoso con se stesso. La scelta di "
+            "`prune_step_turns` e' stata rifatta sui numeri corretti."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="I breakpoint intermedi non si attivano mai sul corpus",
+        finding=(
+            "Contando quante volte `_place_intermediate` piazza qualcosa: 43 chiamate, zero "
+            "marker. La condizione e' che la coda della conversazione superi i 20 blocchi di "
+            "lookback; la coda piu' lunga prodotta dal corpus ne ha 13. Di conseguenza il "
+            "gateway usa al massimo 2 breakpoint dei 4 configurati, e `max_breakpoints` sopra "
+            "2 non ha alcun effetto osservabile: le tre righe della tabella danno numeri "
+            "identici fino all'ultima cifra."
+        ),
+        effect=(
+            "Niente e' stato tolto: il limite dei 20 blocchi e' documentato, e un client "
+            "agentico vero con dieci chiamate parallele per turno lo supera. Ma lo stadio "
+            "resta **non misurato**, e viene detto invece che lasciato intendere. Servirebbe "
+            "uno scenario apposta, che pero' cambierebbe CORPUS_VERSION e azzererebbe i "
+            "confronti storici: una decisione da prendere di proposito, non di sfuggita."
+        ),
+    ),
+
+    TuningEntry(
+        area="misura",
+        title="Il corpus di misura cresce insieme al codice che misura",
+        finding=(
+            "Lo scenario `costruzione` legge i quattordici file .py piu' grandi del progetto "
+            "**al momento dell'esecuzione**. E' quello che lo rende realistico - e' il carico "
+            "vero di una sessione di programmazione assistita - ma significa che ogni commit "
+            "che allunga il codice cambia anche il metro. Fra due ablazioni distanti poche "
+            "ore, il riferimento 'senza gateway' e' passato da $6,3002 a $6,6338: un +5,3% "
+            "che nessuna modifica al gateway aveva prodotto. `CORPUS_VERSION` non se ne "
+            "accorge, perche' l'elenco degli scenari non e' cambiato: e' cambiato il loro "
+            "contenuto."
+        ),
+        effect=(
+            "Nessun numero riportato finora e' sbagliato - dentro una singola esecuzione il "
+            "corpus e' costante, quindi i confronti fra varianti reggono. Sono i confronti "
+            "**fra esecuzioni diverse** a essere contaminati, cioe' proprio la sezione dei "
+            "progressi della dashboard. La correzione naturale e' registrare un'impronta del "
+            "contenuto del corpus accanto a ogni misura e segnalare i confronti che la "
+            "attraversano; congelare i sorgenti in un fixture li renderebbe confrontabili ma "
+            "smetterebbe di misurare il carico vero. La scelta cambia la versione del corpus, "
+            "quindi va fatta di proposito e non di sfuggita."
+        ),
+    ),
+
 ]

@@ -12,10 +12,12 @@ Se cresce oltre le ~100 righe, qualcosa va spostato nel README.
 
 ## La regola che governa tutto il progetto
 
-**Non si dichiara un risparmio: si misura.** Sette voci su quattordici del
+**Non si dichiara un risparmio: si misura.** Quasi metà delle voci del
 [registro delle correzioni](ecotokens/tuning_log.py) sono difetti del *metro*,
 non del prodotto — misure che davano risposte plausibili e sbagliate. Tre volte
 il gateway è stato dichiarato dannoso o inutile da uno strumento rotto.
+L'ultima volta è stato un conto che accreditava due volte la stessa rilettura,
+e a scoprirlo è stato un test scritto sul comportamento atteso.
 
 Prima di accendere uno stadio, di cambiare un default o di scrivere in un
 README che qualcosa risparmia: `ecotokens bench`, `ablate`, o una misura

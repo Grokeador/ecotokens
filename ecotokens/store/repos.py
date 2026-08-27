@@ -317,6 +317,7 @@ class Store:
         cost_usd: float,
         baseline_cost_usd: float,
         saved_usd: float,
+        cache_ttl: str = "5m",
         latency_ms: float | None = None,
         notes: list[str] | None = None,
     ) -> None:
@@ -325,9 +326,9 @@ class Store:
         await self.db.execute(
             """INSERT INTO usage_events
                (session_id, ts, day, month, model, source, input_tokens, output_tokens,
-                cache_creation_tokens, cache_read_tokens, cost_usd, baseline_cost_usd,
-                saved_usd, latency_ms, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                cache_creation_tokens, cache_read_tokens, cache_ttl, cost_usd,
+                baseline_cost_usd, saved_usd, latency_ms, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 ts,
@@ -339,6 +340,7 @@ class Store:
                 usage.output_tokens,
                 usage.cache_creation_tokens,
                 usage.cache_read_tokens,
+                cache_ttl,
                 cost_usd,
                 baseline_cost_usd,
                 saved_usd,
@@ -406,6 +408,46 @@ class Store:
         result["by_model"] = [dict(row) for row in by_model]
         result["by_day"] = [dict(row) for row in by_day]
         return result
+
+    async def cache_write_report(self, limit: int = 20_000) -> dict[str, Any]:
+        """Quante scritture in cache del traffico vero non sono state rilette.
+
+        La stessa domanda che `ecotokens cachewrites` pone al simulatore, qui
+        posta ai dati veri. Il conto lo fa `cache_audit`, che vuole gli eventi
+        in ordine cronologico dentro ogni sessione: da qui l'ORDER BY.
+
+        Solo le richieste andate davvero all'API. Un hit della cache esatta non
+        raggiunge Anthropic e non tocca nessuna voce di cache: contarlo
+        allungherebbe le sessioni con eventi vuoti senza cambiare nulla.
+
+        Le richieste senza sessione ricevono ognuna un identificatore suo. Non
+        sapendo se continuino una conversazione, incatenarle sarebbe un'ipotesi
+        travestita da dato: cosi' ognuna risulta una scrittura di coda, che e'
+        la lettura piu' prudente.
+        """
+        from ..cache_audit import CacheEvent, audit_cache_writes
+        from ..pipeline.base import SOURCE_API
+
+        rows = await self.db.query(
+            """SELECT session_id, id, model, cache_ttl,
+                      cache_read_tokens, cache_creation_tokens
+               FROM usage_events
+               WHERE source = ?
+               ORDER BY session_id, ts, id
+               LIMIT ?""",
+            (SOURCE_API, limit),
+        )
+        eventi = [
+            CacheEvent(
+                session_id=riga["session_id"] or f"senza-sessione:{riga['id']}",
+                read_tokens=int(riga["cache_read_tokens"] or 0),
+                write_tokens=int(riga["cache_creation_tokens"] or 0),
+                model=riga["model"],
+                cache_ttl=riga["cache_ttl"] or "5m",
+            )
+            for riga in rows
+        ]
+        return audit_cache_writes(eventi).to_dict()
 
     # -- cache esatta -----------------------------------------------------
 

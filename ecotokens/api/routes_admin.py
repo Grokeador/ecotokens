@@ -28,6 +28,7 @@ async def stats(gateway=Depends(_gateway)) -> dict[str, Any]:
     # sola misura del progetto che non costa niente ottenere: i campioni
     # arrivano dalle chiamate a count_tokens, gia' pagate per altro.
     data["calibration"] = await gateway.store.estimate_calibration()
+    data["cache_writes"] = await gateway.store.cache_write_report()
     data["stages_enabled"] = {
         stage.name: bool(getattr(stage, "enabled", True))
         for stage in gateway.pipeline.stages
