@@ -9,6 +9,7 @@ import pytest
 
 from ecotokens.api.schemas import ChatCompletionRequest
 from ecotokens.config import Settings
+from ecotokens.wording import MEMORY_OPEN
 from ecotokens.pipeline.base import RequestContext
 from ecotokens.pipeline.memory import MemoryStage
 from ecotokens.store.db import Database
@@ -76,11 +77,15 @@ def make_context(settings, messages, *, store=None, client=None, session=None, m
 
 
 async def test_fatti_iniettati_in_coda(settings, store):
-    """La memoria va dopo il prefisso in cache, mai nel system.
+    """Col recupero per pertinenza la memoria va in coda, mai nel system.
 
-    Metterla in testa cambierebbe il prefisso a ogni turno e farebbe mancare
-    la cache dell'intera conversazione.
+    L'insieme dei fatti cambia a ogni turno perche' cambia la domanda:
+    metterlo in testa cambierebbe il prefisso ogni volta e farebbe mancare la
+    cache dell'intera conversazione. E' il motivo per cui questa modalita' non
+    puo' stare altrove - e per cui non e' piu' il default, visto che su fatti
+    telegrafici non trova quasi niente (vedi `ecotokens ritenzione`).
     """
+    settings.memory.retrieval = "pertinente"
     sessione = await store.create_session("fp", "claude-opus-5")
     await store.add_facts(
         sessione.id,
@@ -103,11 +108,12 @@ async def test_fatti_iniettati_in_coda(settings, store):
 
     ultimo = ctx.params["messages"][-1]
     assert ultimo["role"] == "system", "su Opus 5 la memoria usa il canale operatore"
-    assert "memoria-rilevante" in ultimo["content"]
+    assert MEMORY_OPEN in ultimo["content"]
     assert "Python 3.13" in ultimo["content"]
 
 
 async def test_memoria_degrada_sui_modelli_senza_system_a_meta(settings, store):
+    settings.memory.retrieval = "pertinente"
     sessione = await store.create_session("fp2", "claude-sonnet-5")
     await store.add_facts(sessione.id, ["Il progetto usa Python 3.13"])
 
@@ -122,7 +128,7 @@ async def test_memoria_degrada_sui_modelli_senza_system_a_meta(settings, store):
 
     ultimo = ctx.params["messages"][-1]
     assert ultimo["role"] == "user"
-    assert "memoria-rilevante" in ultimo["content"][-1]["text"]
+    assert MEMORY_OPEN in ultimo["content"][-1]["text"]
 
 
 async def test_nessuna_iniezione_senza_fatti_pertinenti(settings, store):
@@ -206,3 +212,72 @@ async def test_estrazione_fallita_non_propaga(settings, store):
     await asyncio.gather(*stage._tasks)
 
     assert await store.existing_facts(sessione.id) == set()
+
+
+# --- il recupero stabile, che e' il default -------------------------------
+
+
+async def test_col_recupero_stabile_i_fatti_stanno_nel_prefisso(settings, store):
+    """Il blocco e' fermo, quindi puo' stare dove la cache lo rilegge a 0,1x."""
+    sessione = await store.create_session("fps", "claude-opus-5")
+    await store.add_facts(sessione.id, ["Porta: 8443", "Python 3.13"])
+
+    ctx = make_context(
+        settings,
+        [
+            {"role": "system", "content": "Istruzioni stabili."},
+            {"role": "user", "content": "Su quale interfaccia mi metto in ascolto?"},
+        ],
+        store=store,
+        session=sessione,
+    )
+    await MemoryStage(settings).before(ctx)
+
+    blocchi = [b["text"] for b in ctx.params["system"]]
+    assert blocchi[0] == "Istruzioni stabili.", "le istruzioni dell'utente restano prime"
+    assert "8443" in blocchi[-1] and "Python 3.13" in blocchi[-1]
+    assert ctx.params["messages"][-1]["role"] == "user", "e niente in coda"
+
+
+async def test_il_recupero_stabile_trova_cio_che_quello_lessicale_manca(settings, store):
+    """Il caso che ha fatto cambiare il default, ridotto all'osso.
+
+    "Porta: 8443" e "su quale interfaccia devo mettermi in ascolto?" non hanno
+    una parola in comune. La ricerca lessicale non trova niente; quella stabile
+    porta tutto per costruzione. E' la conseguenza di aver reso i fatti
+    telegrafici: accorciandoli si sono tolte le parole su cui il match si
+    reggeva. Due decisioni giuste che, prese insieme, si rompevano a vicenda.
+    """
+    sessione = await store.create_session("fpx", "claude-opus-5")
+    await store.add_facts(sessione.id, ["Porta: 8443"])
+    domanda = "Su quale interfaccia devo mettermi in ascolto?"
+
+    assert await store.search_facts(sessione.id, domanda, 8) == [], (
+        "se questo trovasse qualcosa, il default non avrebbe ragione di essere"
+    )
+    assert await store.stable_facts(sessione.id, 40) == ["Porta: 8443"]
+
+
+async def test_i_fatti_stabili_escono_sempre_nello_stesso_ordine(settings, store):
+    """Un ordine che cambia cambia il prefisso, e non si vedrebbe: stesso
+    contenuto, impronta diversa."""
+    sessione = await store.create_session("fpo", "claude-opus-5")
+    fatti = [f"Voce {i}: valore {i}" for i in range(6)]
+    await store.add_facts(sessione.id, fatti)
+
+    for _ in range(3):
+        assert await store.stable_facts(sessione.id, 40) == fatti
+
+
+async def test_il_tetto_dei_fatti_stabili_taglia_i_piu_recenti(settings, store):
+    """Tagliando i piu' vecchi, ogni fatto nuovo sposterebbe tutta la finestra."""
+    sessione = await store.create_session("fpt", "claude-opus-5")
+    await store.add_facts(sessione.id, [f"Voce {i}" for i in range(5)])
+
+    primi = await store.stable_facts(sessione.id, 3)
+    assert primi == ["Voce 0", "Voce 1", "Voce 2"]
+
+    await store.add_facts(sessione.id, ["Voce 5"])
+    assert await store.stable_facts(sessione.id, 3) == primi, (
+        "un fatto nuovo non deve cambiare il blocco gia' in cache"
+    )

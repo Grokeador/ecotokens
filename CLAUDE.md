@@ -12,7 +12,7 @@ Se cresce oltre le ~100 righe, qualcosa va spostato nel README.
 
 ## La regola che governa tutto il progetto
 
-**Non si dichiara un risparmio: si misura.** Esattamente metà delle voci del
+**Non si dichiara un risparmio: si misura.** Quasi metà delle voci del
 [registro delle correzioni](ecotokens/tuning_log.py) sono difetti del *metro*,
 non del prodotto — misure che davano risposte plausibili e sbagliate. Tre volte
 il gateway è stato dichiarato dannoso o inutile da uno strumento rotto.
@@ -54,27 +54,32 @@ sessione, non solo del gateway.
 5. **Comprimere e mettere in cache tirano in direzioni opposte.** Qualunque
    riscrittura di ciò che sta all'inizio del contesto costa più di quanto fa
    risparmiare, a meno che non sia **deterministica e stabile**.
+6. **Due decisioni giuste possono rompersi a vicenda.** Fatti di memoria
+   telegrafici (si pagano sempre) più ricerca lessicale (gratuita): insieme,
+   zero fatti trovati su tre, perché accorciandoli si tolgono le parole su cui
+   il match si regge. Cambiando due cose, misurare la coppia.
+7. **L'aritmetica a tavolino convince in fretta di cose false.** Un conto su
+   carta dava +21% a spostare i fatti nel prefisso; misurato, −0,4%. Il conto
+   era giusto, sbagliate le grandezze dentro. Una stima non sostituisce
+   l'esecuzione — vale anche qui.
 
 ## Il circolo fra sessione e prodotto
 
 Le due direzioni vanno tenute entrambe aperte, ed è il motivo per cui questo
 file esiste.
 
-**Sessione → EcoTokens.** Quando una pratica di lavoro qui si rivela utile e si
-può automatizzare, diventa uno stadio o un default del gateway. Esempi già
-percorsi: la normalizzazione del testo prima della chiave di cache è nata
-notando che due richieste identiche a meno di uno spazio non si riconoscevano.
+**Sessione → EcoTokens.** Una pratica di lavoro che qui si rivela utile e si può
+automatizzare diventa uno stadio o un default (la normalizzazione prima della
+chiave di cache è nata così).
 
 **Contare prima di progettare.** Prima di raffinare uno stadio, misurare quante
-volte interviene davvero. L'effort adattivo sembrava un'euristica da migliorare;
-contando le valutazioni si è visto che il problema non era la qualità della
-regola ma un veto in blocco che la spegneva sul 45% del traffico. La domanda
-vale per ogni stadio: *quante volte ha fatto qualcosa?*
+volte interviene: l'effort adattivo sembrava un'euristica da migliorare, e
+invece un veto lo spegneva sul 45% del traffico. `ecotokens ritenzione` fa la
+domanda gemella — *ciò che serviva è arrivato al prompt?* — e la prima risposta
+è stata **zero fatti su tutti** con la potatura accesa.
 
-**EcoTokens → sessione.** Quando una misura del banco smentisce un'intuizione,
-la regola cambia *anche qui sopra*, in questo file. Il registro delle
-correzioni è la fonte: se una voce nuova cambia il modo di lavorare, va
-riportata nell'elenco qui sopra.
+**EcoTokens → sessione.** Quando una misura smentisce un'intuizione, la regola
+cambia *anche qui sopra*. Il registro delle correzioni è la fonte.
 
 Protocollo, quando si trova qualcosa:
 
@@ -88,23 +93,26 @@ Protocollo, quando si trova qualcosa:
 
 ## Trappole già calpestate — non ricalpestarle
 
-- **Un parametro il cui costo scende sempre non è da ottimizzare.**
-  `keep_recent_messages` costa meno più lo si abbassa, ma ciò che si perde — la
-  qualità della risposta — il banco non lo misura. È un giudizio, non un ottimo.
-- **Il simulatore conta i token dalla lunghezza del testo.** Va bene per
-  chiedersi *a quale tariffa* un token viene fatturato, non *quanti* token
-  serva una parola. Qualunque misura di accorciamento lessicale fatta lì si
-  autoconferma.
-- **Gli heredoc di Git Bash mangiano i backslash.** Per file con `\n` dentro le
-  stringhe usare Write o Edit, non `cat <<'EOF'`.
-- **Aggiungere uno scenario invalida i confronti storici.** Il corpus è
-  versionato (`CORPUS_VERSION` in `bench.py`): cambiarlo azzera la sezione dei
-  progressi nella dashboard. Farlo di rado e di proposito.
+- **Gli heredoc di Git Bash mangiano i backslash.** Per file con `
+` dentro le
+  stringhe usare Write o Edit, non `cat <<'EOF'`. È la trappola che scatta più
+  spesso, e costa un errore di sintassi ogni volta.
+- **`git checkout --` scarta, non mette da parte.** Per isolare un commit,
+  copiare i file altrove *prima*: un `checkout` su file modificati e non messi
+  in stage cancella il lavoro senza chiedere e senza reflog.
+- **Un parametro il cui costo scende sempre non è da ottimizzare**
+  (`keep_recent_messages`).
+- **Il simulatore conta i token dalla lunghezza del testo**: va bene per sapere
+  *a quale tariffa* si paga, non *quanti* token serva una parola.
+- **Aggiungere uno scenario invalida i confronti storici** (`CORPUS_VERSION`).
+
+Il dettaglio di ciascuna sta nel README, sezione «Trappole».
 
 ## Comandi
 
 `serve` `stats` `purge` · misure: `bench` `ablate` `optimize` `compaction`
-`prompt` `substitutions` `cachekey` `overhead` `pruning` `dashboard`
+`prompt` `substitutions` `cachekey` `overhead` `pruning` `ritenzione` `memoria`
+`ceiling` `cachewrites` `dashboard`
 
 Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
 devono mai richiedere rete.

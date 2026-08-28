@@ -280,7 +280,9 @@ def _config_snapshot(settings: Settings) -> list[dict[str, Any]]:
         {"name": "cache esatta", "enabled": settings.exact_cache.enabled,
          "detail": f"TTL {settings.exact_cache.ttl_seconds // 3600} h"},
         {"name": "cache semantica", "enabled": settings.semantic_cache.enabled,
-         "detail": f"soglia {settings.semantic_cache.similarity_threshold}"},
+         "detail": f"soglia {settings.semantic_cache.similarity_threshold}"
+                   if settings.semantic_cache.enabled
+                   else settings.semantic_cache.motivo_se_spenta},
         {"name": "potatura contesto", "enabled": settings.context.enabled,
          "detail": f"oltre il {settings.context.trigger_ratio * 100:.0f}% della finestra"},
         {"name": "riassunto cronologia", "enabled": settings.context.local_compaction,
@@ -296,7 +298,9 @@ def _config_snapshot(settings: Settings) -> list[dict[str, Any]]:
         {"name": "cambio di modello", "enabled": settings.router.model_downgrade,
          "detail": "una volta per sessione"},
         {"name": "memoria", "enabled": settings.memory.enabled,
-         "detail": f"max {settings.memory.max_facts_injected} fatti"},
+         "detail": f"max {settings.memory.max_facts_injected} fatti"
+                   if settings.memory.enabled
+                   else settings.memory.motivo_se_spenta},
         {"name": "tetto di spesa", "enabled": settings.budget.enabled,
          "detail": f"${settings.budget.daily_usd:.2f} al giorno"},
     ]

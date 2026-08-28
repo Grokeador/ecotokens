@@ -234,8 +234,9 @@ class ContextStage(BaseStage):
                 "content": [
                     {
                         "type": "text",
-                        "text": f"<riassunto-conversazione-precedente>\n{summary}\n"
-                        "</riassunto-conversazione-precedente>",
+                        # Dalla tavola, non a mano: la forma corta esisteva e
+                        # questo punto emetteva ancora quella lunga.
+                        "text": wrap(SUMMARY_OPEN, SUMMARY_CLOSE, summary),
                     }
                 ],
             }

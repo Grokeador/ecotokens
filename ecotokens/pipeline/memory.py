@@ -42,16 +42,37 @@ class MemoryStage(BaseStage):
         if not query.strip():
             return
 
-        facts = await ctx.store.search_facts(
-            ctx.session.id, query, self.config.max_facts_injected
-        )
+        stabile = self.config.retrieval == "stabile"
+        if stabile:
+            facts = await ctx.store.stable_facts(
+                ctx.session.id, self.config.max_facts_stable
+            )
+        else:
+            facts = await ctx.store.search_facts(
+                ctx.session.id, query, self.config.max_facts_injected
+            )
         if not facts:
             return
 
         block = "\n".join(f"- {fact[: self.config.max_fact_chars]}" for fact in facts)
-        text = f"<memoria-rilevante>\n{block}\n</memoria-rilevante>"
-        _append_in_tail(ctx, text)
-        ctx.note(f"{len(facts)} fatti di memoria iniettati in coda")
+        # Delimitatori dalla tavola in `wording`, non scritti a mano qui: la
+        # forma corta era stata definita apposta e questo punto continuava a
+        # emettere quella lunga, mentre `ecotokens overhead` dichiarava il
+        # risparmio come gia' ottenuto. Un'ottimizzazione contata e mai
+        # applicata e' peggio di una mancante: nessuno la va a cercare.
+        text = wrap(MEMORY_OPEN, MEMORY_CLOSE, block)
+
+        if stabile:
+            # Nel prefisso, non in coda. Il blocco e' identico finche' i fatti
+            # non cambiano, quindi il pianificatore puo' metterci un breakpoint
+            # sopra e da li' in poi si rilegge a 0,1x invece di pagarlo 1x a
+            # ogni richiesta. Quando un fatto nuovo arriva il prefisso si
+            # invalida davvero: e' il prezzo di questa modalita'.
+            _prepend_in_prefix(ctx, text)
+            ctx.note(f"{len(facts)} fatti di memoria nel prefisso in cache")
+        else:
+            _append_in_tail(ctx, text)
+            ctx.note(f"{len(facts)} fatti di memoria iniettati in coda")
 
     async def after(self, ctx: RequestContext, message: Any | None) -> None:
         if message is None or ctx.session is None or ctx.source != "api":
@@ -155,6 +176,25 @@ def _append_in_tail(ctx: RequestContext, text: str) -> None:
         last["content"].append({"type": "text", "text": text})
     else:
         messages.append({"role": "user", "content": [{"type": "text", "text": text}]})
+
+
+def _prepend_in_prefix(ctx: RequestContext, text: str) -> None:
+    """Mette il testo in fondo al `system`, cioe' dentro il prefisso in cache.
+
+    L'ordine di render e' `tools` -> `system` -> `messages`: un blocco in coda
+    al system sta prima di tutta la conversazione, quindi il breakpoint che il
+    pianificatore piazza sul system lo copre. In fondo e non in testa perche'
+    cosi' le istruzioni scritte dall'utente restano il primo byte: cambiando
+    quello si invaliderebbe anche cio' che sta sopra.
+    """
+    system = ctx.params.get("system")
+    blocco = {"type": "text", "text": text}
+    if isinstance(system, list):
+        system.append(blocco)
+    elif isinstance(system, str):
+        ctx.params["system"] = [{"type": "text", "text": system}, blocco]
+    else:
+        ctx.params["system"] = [blocco]
 
 
 def _last_user_text(params: dict[str, Any]) -> str:

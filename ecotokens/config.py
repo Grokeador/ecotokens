@@ -231,11 +231,65 @@ class PromptSettings(BaseModel):
 
 
 class MemorySettings(BaseModel):
+    """Spenta di default, e per una ragione che va detta invece che subita.
+
+    Non e' un giudizio sulla funzione: e' che il banco non la sa misurare. Il
+    costo della memoria e' visibile - i fatti iniettati a ogni richiesta piu'
+    una chiamata di estrazione per turno - mentre il beneficio, cioe' che il
+    modello risponda meglio perche' ricorda, e' esattamente cio' che il banco
+    non legge. Accesa nell'ablazione potrebbe solo risultare **negativa**, per
+    quanto bene funzioni.
+
+    La regola del progetto per questo caso e' esplicita: se la misura non e'
+    possibile con gli strumenti disponibili, si dice e si lascia spento.
+    `ecotokens ritenzione` misura la meta' misurabile - se l'informazione
+    necessaria sopravvive fino al prompt - e chi la accende guardi quella.
+    """
+
     enabled: bool = False
+    # Perche' e' spenta. Non e' documentazione: console e dashboard lo mostrano
+    # accanto allo stadio, cosi' chi legge "spento" non deve chiedere a
+    # qualcuno cosa significhi.
+    motivo_se_spenta: str = (
+        "il beneficio non e' misurabile dal banco: accenderla peggiora ogni "
+        "numero di questa pagina anche quando fa il suo lavoro"
+    )
+    # Dove finiscono i fatti, ed e' la scelta che decide se si pagano a prezzo
+    # pieno per sempre o un decimo dopo la prima volta.
+    #
+    # "pertinente" recupera i fatti che somigliano alla domanda corrente: pochi
+    # e mirati, ma l'insieme cambia a ogni turno perche' cambia la domanda,
+    # quindi il blocco deve stare in coda ed e' fatturato 1x ogni volta.
+    #
+    # "stabile" mette tutti i fatti della sessione, in ordine fisso, nel
+    # prefisso memorizzabile: cambia solo quando cambiano i fatti.
+    #
+    # Il default e' "stabile", e non per il costo: sul costo perde. Misurato
+    # con `ecotokens memoria`, il prefisso costa fra lo 0,4% e il 2,2% in
+    # **piu'**, perche' il blocco e' piccolo e la scrittura si paga 1,25x.
+    # L'ipotesi di partenza diceva +21% ed era sbagliata.
+    #
+    # Vince su un altro asse. Il recupero per pertinenza e' lessicale: cerca le
+    # parole della domanda dentro i fatti. Ma i fatti si scrivono telegrafici -
+    # si pagano a ogni richiesta - e "Porta: 8443" non ha parole da far
+    # combaciare con "su quale interfaccia devo mettermi in ascolto?".
+    # Misurato con `ecotokens ritenzione`: su domande che non condividono le
+    # parole, il recupero per pertinenza trova **zero fatti su tre**, quello
+    # stabile tre su tre. Le due cose giuste - fatti corti e recupero mirato -
+    # si rompono a vicenda, e questa e' la sola combinazione che regge. Il 2%
+    # e' il prezzo di un recupero che funziona.
+    retrieval: Literal["pertinente", "stabile"] = "stabile"
+    # Tetto ai fatti del blocco stabile, perche' una sessione lunghissima non
+    # si porti dietro un prefisso che cresce senza limite.
+    max_facts_stable: int = 40
     # Modello economico usato per estrarre i fatti da ricordare.
     extraction_model: str = "claude-haiku-4-5"
     max_facts_injected: int = 8
-    max_fact_chars: int = 400
+    # Un fatto telegrafico sta in una riga. Il tetto precedente era 400: non
+    # tagliava mai niente, quindi non era un tetto ma una decorazione. A 120
+    # taglia i fatti scritti come frasi, che e' cio' che si vuole scoraggiare -
+    # e il taglio si vede, invece di essere pagato in silenzio a ogni richiesta.
+    max_fact_chars: int = 120
 
 
 class ExactCacheSettings(BaseModel):
@@ -261,6 +315,11 @@ class SemanticCacheSettings(BaseModel):
     un'ottimizzazione neutra: due domande vicine nello spazio degli embedding
     possono avere risposte giuste diverse.
     """
+
+    motivo_se_spenta: str = (
+        "puo' servire una risposta gia' data a una domanda solo simile: e' un "
+        "rischio di correttezza, non un'ottimizzazione neutra"
+    )
 
     enabled: bool = False
     model_name: str = "BAAI/bge-small-en-v1.5"
@@ -331,6 +390,15 @@ class RouterSettings(BaseModel):
 
 class BudgetSettings(BaseModel):
     enabled: bool = False
+    # Spento perche' non esiste un tetto predefinito sensato: dipende da quanto
+    # si e' disposti a spendere, che nessuno puo' decidere al posto dell'utente.
+    # Un tetto scelto da noi sarebbe o troppo basso - e bloccherebbe richieste
+    # legittime, il modo piu' rapido di far spegnere una rete di sicurezza - o
+    # cosi' alto da non proteggere da niente.
+    motivo_se_spenta: str = (
+        "un tetto di spesa e' una decisione, non un valore predefinito: "
+        "sceglierlo al posto dell'utente lo renderebbe inutile o dannoso"
+    )
     daily_usd: float = 5.0
     monthly_usd: float = 100.0
     # Preventivo esatto con count_tokens prima di inviare. Costa una chiamata

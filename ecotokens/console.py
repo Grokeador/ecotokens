@@ -101,10 +101,21 @@ def _config_stadi(gateway: Any) -> list[dict[str, Any]]:
     una discrepanza, ed e' esattamente quella che una console dovrebbe far
     vedere invece di ripetere l'intenzione.
     """
-    return [
-        {"name": stadio.name, "enabled": bool(getattr(stadio, "enabled", True))}
-        for stadio in gateway.pipeline.stages
-    ]
+    sezioni = {
+        "memory": gateway.settings.memory,
+        "semantic_cache": gateway.settings.semantic_cache,
+        "budget": gateway.settings.budget,
+    }
+    voci = []
+    for stadio in gateway.pipeline.stages:
+        acceso = bool(getattr(stadio, "enabled", True))
+        # Il motivo lo dichiara la configurazione, che e' anche il posto dove
+        # si decide. Ripeterlo qui vorrebbe dire tenerne due copie, e una
+        # delle due invecchierebbe: e' successo alla didascalia della
+        # dashboard, che diceva "spenti" mentre la sua tabella diceva "attivo".
+        motivo = "" if acceso else getattr(sezioni.get(stadio.name), "motivo_se_spenta", "")
+        voci.append({"name": stadio.name, "enabled": acceso, "reason": motivo})
+    return voci
 
 
 # --- avvisi: conteggi, non giudizi ---------------------------------------
@@ -421,6 +432,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .stage-fill.zero { background: var(--idle); }
 .stage-num { font-size: .78rem; color: var(--ink-soft); text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .stage-note { grid-column: 2 / -1; font-size: .76rem; color: var(--ink-faint); margin-top: -.35rem; }
+.stage-row.conf { grid-template-columns: 9.5rem 1fr 4.5rem; align-items: baseline; }
+.conf-note { grid-column: 2; margin-top: 0; }
+.stage-num.acceso { color: var(--good); }
+.stage-num.spento { color: var(--ink-faint); }
 
 /* --- avvisi --- */
 .alerts { display: flex; flex-direction: column; gap: .6rem; }
@@ -737,6 +752,23 @@ _JS = r"""
       '<div class="feed">' + righe + "</div>");
   }
 
+  function configurazione(d) {
+    if (!d.config || !d.config.length) return "";
+    var righe = d.config.map(function (s) {
+      return '<div class="stage-row conf">' +
+        '<span class="stage-name">' + esc(s.name) + "</span>" +
+        '<span class="stage-note conf-note">' + esc(s.reason || "") + "</span>" +
+        '<span class="stage-num ' + (s.enabled ? "acceso" : "spento") + '">' +
+        (s.enabled ? "attivo" : "spento") + "</span></div>";
+    }).join("");
+    return pannello("Gli stadi montati adesso",
+      "Letti dalla pipeline che ha servito le richieste, non dal file di configurazione: " +
+      "fra ciò che si è scritto e ciò che gira c'è spazio per una differenza, ed è quella " +
+      "che una console dovrebbe far vedere. Dove uno stadio è spento per scelta, accanto " +
+      "c'è il perché.",
+      '<div class="stages">' + righe + "</div>", true);
+  }
+
   function nonMisurato(d) {
     var corpo = '<div class="non-misurato">' + d.not_measured.map(function (v) {
       return "<div><h3>" + esc(v.title) + "</h3><p>" + esc(v.body) + "</p></div>";
@@ -757,11 +789,11 @@ _JS = r"""
       aperti[el.getAttribute("data-k")] = true;
     });
     if (!d.requests) {
-      nodo.innerHTML = vuoto() + nonMisurato(d);
+      nodo.innerHTML = vuoto() + configurazione(d) + nonMisurato(d);
     } else {
       nodo.innerHTML = [
         verdetto(d), avvisi(d), flusso(d), stadi(d), scritture(d),
-        latenza(d), modelli(d), taratura(d), feed(d), nonMisurato(d)
+        latenza(d), modelli(d), taratura(d), feed(d), configurazione(d), nonMisurato(d)
       ].join("");
     }
     document.getElementById("orario").textContent =

@@ -793,6 +793,26 @@ class Store:
             [(now, fact_id) for fact_id in fact_ids],
         )
 
+    async def stable_facts(self, session_id: str | None, limit: int) -> list[str]:
+        """Tutti i fatti della sessione, in ordine fisso di inserimento.
+
+        L'ordine e' la meta' del punto. `search_facts` ordina per pertinenza
+        alla domanda, quindi lo stesso insieme puo' uscire in ordine diverso a
+        due turni vicini: il blocco cambia, il prefisso cambia, e la cache non
+        trova niente. Qui l'ordine e' l'id, che non si muove mai.
+
+        Il taglio prende i **piu' vecchi**, non i piu' recenti: sono i fatti
+        gia' presenti nei turni scorsi, quindi tenerli e' cio' che mantiene il
+        blocco identico a se stesso. Tagliare dal fondo lo farebbe cambiare a
+        ogni fatto nuovo, che e' il difetto che si sta evitando.
+        """
+        righe = await self.db.query(
+            """SELECT text FROM memory_facts WHERE session_id = ?
+               ORDER BY id LIMIT ?""",
+            (session_id, limit),
+        )
+        return [riga["text"] for riga in righe]
+
     async def existing_facts(self, session_id: str | None) -> set[str]:
         rows = await self.db.query(
             "SELECT text FROM memory_facts WHERE session_id = ?", (session_id,)

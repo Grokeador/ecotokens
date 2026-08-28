@@ -440,3 +440,39 @@ async def test_il_json_della_console_e_serializzabile(client):
     """La pagina lo riceve come JSON: un tipo non serializzabile la spegnerebbe."""
     dati = await build_console_data(client.gateway)
     json.dumps(dati)
+
+
+# --- perche' uno stadio e' spento ------------------------------------------
+
+
+async def test_ogni_stadio_spento_dice_perche(client):
+    """"Spento" senza una ragione costringe a chiedere a qualcuno.
+
+    E' successo davvero: la console mostrava "memoria - spento" e l'unico modo
+    di sapere il perche' era leggere il codice. Il motivo lo dichiara ora la
+    configurazione, cioe' il posto dove si decide, e console e dashboard lo
+    leggono da li' invece di tenerne una copia che invecchia.
+    """
+    dati = client.get("/admin/live").json()
+    muti = [
+        voce["name"]
+        for voce in dati["config"]
+        if not voce["enabled"] and not voce.get("reason")
+    ]
+    assert muti == [], f"spenti senza spiegazione: {muti}"
+
+
+async def test_uno_stadio_acceso_non_porta_una_scusa(client):
+    """Il motivo esiste solo mentre serve: accanto a uno attivo sarebbe rumore."""
+    dati = client.get("/admin/live").json()
+    assert all(not voce["reason"] for voce in dati["config"] if voce["enabled"])
+
+
+def test_la_console_legge_gli_stadi_dalla_pipeline_non_dalla_configurazione(client):
+    """Fra cio' che si e' scritto e cio' che gira c'e' spazio per una differenza.
+
+    Farla vedere e' il mestiere di una console; ripetere l'intenzione no.
+    """
+    nella_pipeline = [s.name for s in client.gateway.pipeline.stages]
+    dalla_console = [voce["name"] for voce in client.get("/admin/live").json()["config"]]
+    assert dalla_console == nella_pipeline

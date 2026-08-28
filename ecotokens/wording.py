@@ -80,11 +80,17 @@ MERGE_RULES = (
 )
 
 # Regole per l'estrattore di memoria.
+# I fatti finiscono nel prompt di ogni richiesta successiva, quindi si pagano
+# molte volte: vanno scritti telegrafici. Non e' una sostituzione lessicale -
+# quella si autoconferma su un simulatore che conta i caratteri - e' dire di
+# meno, che costa meno sotto qualunque tokenizer.
 EXTRACTION_RULES = (
-    "Estrai i fatti stabili da ricordare nei prossimi scambi: preferenze, vincoli, "
-    "decisioni, dati concreti (nomi, versioni, percorsi).\n"
-    "Ignora cio' che vale solo per questo turno.\n"
-    "Rispondi con un array JSON di stringhe, massimo 5. Se non c'e' nulla: []."
+    "Estrai i fatti stabili da ricordare: preferenze, vincoli, decisioni, dati "
+    "concreti (nomi, versioni, percorsi).\n"
+    "Salta cio' che vale solo per questo turno.\n"
+    'Scrivi telegrafico: chiave e valore, niente frasi. "Python 3.13", non '
+    '"il progetto usa la versione 3.13 di Python". Max 12 parole l\'uno.\n'
+    "Array JSON di stringhe, max 5. Niente da salvare: []."
 )
 
 # Segnaposto nella trascrizione data al riassuntore. Al riassunto serve sapere
@@ -107,6 +113,14 @@ class Wording:
     # Quante volte compare in una richiesta che la attiva. I delimitatori sono
     # due (apertura e chiusura), le istruzioni una sola.
     per_use: int = 1
+    # Se il testo si paga su **ogni** richiesta dell'utente o una tantum in una
+    # chiamata interna del gateway. La distinzione decide se accorciarlo sia
+    # sempre un guadagno: le regole date all'estrattore di memoria si pagano
+    # una volta per turno, mentre i fatti che producono si rispediscono a ogni
+    # richiesta successiva. Allungare le prime di 27 token per far scrivere
+    # fatti da 4 invece che da 25 si ripaga alla seconda richiesta - ma un
+    # invariante che pretenda "tutto piu' corto" boccerebbe la cosa giusta.
+    su_ogni_richiesta: bool = True
 
     @property
     def tokens(self) -> int:
@@ -157,6 +171,7 @@ CATALOG: tuple[Wording, ...] = (
     ),
     Wording(
         key="regole-riassunto",
+        su_ogni_richiesta=False,
         purpose="istruzioni date al riassuntore di compattazione",
         text=SUMMARY_RULES,
         legacy=(
@@ -168,6 +183,7 @@ CATALOG: tuple[Wording, ...] = (
     ),
     Wording(
         key="regole-memoria",
+        su_ogni_richiesta=False,
         purpose="istruzioni date all'estrattore di memoria",
         text=EXTRACTION_RULES,
         legacy=(

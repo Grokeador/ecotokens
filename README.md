@@ -554,6 +554,66 @@ fedeltà che il banco non misura. Quel contesto prima restava integrale, ora i
 risultati di tool vecchi diventano un segnaposto. È `prune_min_prunable_tokens`,
 e alzarlo lo disattiva.
 
+### Se la risposta resta buona: la metà che si può misurare
+
+```bash
+ecotokens ritenzione
+```
+
+Quattro funzioni del gateway — memoria, cache semantica, declassamento di
+modello, effort minimo — erano spente o non misurate per lo stesso motivo: il
+banco vede il loro **costo** e non il loro **beneficio**. Non erano quattro
+problemi, era uno solo.
+
+La domanda intera («la risposta è ancora giusta?») non è misurabile senza un
+modello che ne giudica un altro, cioè un metro con opinioni. Ne contiene però
+una più piccola e deterministica: **l'informazione necessaria è arrivata fino al
+prompt?** Se non c'è, nessun modello può rispondere, e la verifica è la ricerca
+di una stringa — niente soglie, niente giudizio.
+
+Il comando pianta un dato a un turno («Porta: 8443»), lo richiede venti turni
+dopo, e guarda il prompt in partenza.
+
+| Carico | intatto | potato | potato + memoria | + memoria stabile |
+|---|---:|---:|---:|---:|
+| identità | 100% | **0%** | 100% | 100% |
+| parole-diverse | 100% | **0%** | **0%** | 100% |
+| vincoli | 100% | **0%** | 100% | 100% |
+
+Due risultati, e nessuno dei due era visibile prima.
+
+**La potatura perde tutto.** Con potatura e riassunto accesi sopravvive lo zero
+per cento dei fatti piantati, su ogni scenario. Non rende la potatura sbagliata
+— resta la difesa contro l'overflow di contesto — ma la toglie dall'elenco delle
+cose da accendere a cuor leggero, e la memoria smette di essere un lusso.
+
+**Fatti corti e ricerca lessicale si rompono a vicenda.** I fatti si
+rispediscono a ogni richiesta, quindi vanno scritti telegrafici: `Porta: 8443`
+costa 4 token, `La porta di ascolto deve restare la 8443` ne costa 25. Ma il
+recupero cerca le parole della domanda dentro i fatti, e accorciandoli si tolgono
+le parole su cui il match si regge. Su domande con sinonimi — *«su quale
+interfaccia devo mettermi in ascolto?»* — trova **zero fatti su tre**.
+
+Da qui `memory.retrieval = "stabile"`, ora predefinita: tutti i fatti della
+sessione, in ordine fisso, dentro il prefisso memorizzabile. Immune per
+costruzione.
+
+```bash
+ecotokens memoria
+```
+
+Sul **costo** quella modalità perde: fra −0,4% e −2,2%, perché il blocco è
+piccolo e la scrittura in cache si paga 1,25×. L'ipotesi di partenza diceva
++21%, con un'aritmetica fatta su carta — il conto era giusto, sbagliate le
+grandezze che ci erano state messe. Il default cambia lo stesso, per l'altro
+asse: quel 2% è il prezzo di un recupero che funziona.
+
+Con il simulatore l'estrattore è **perfetto per ipotesi** — i fatti entrano nel
+deposito senza passare da un modello, che qui inventerebbe. Il numero della
+memoria è quindi un limite superiore: dice se un fatto estratto arriva al
+prompt, non se l'estrazione lo avrebbe trovato. Quella metà si misura solo con
+`--live`.
+
 ### Le scritture in cache che nessuno rilegge
 
 L'ablazione dice che il prompt caching vale il **67%** del risparmio e che gli
@@ -995,6 +1055,23 @@ otto difetti del *metro* e undici del *gateway*:
   scende sempre abbassandolo, ma quello che si perde — la qualità della
   risposta — il banco non lo misura. Qui la misura era corretta e rispondeva a
   una domanda diversa da quella che sembrava.
+
+## Trappole
+
+Cose su cui il progetto ha già perso tempo una volta.
+
+- **Un parametro il cui costo scende sempre non è da ottimizzare.**
+  `keep_recent_messages` costa meno più lo si abbassa, ma ciò che si perde — la
+  qualità della risposta — il banco non lo misura. È un giudizio, non un ottimo.
+- **Il simulatore conta i token dalla lunghezza del testo.** Va bene per
+  chiedersi *a quale tariffa* un token viene fatturato, non *quanti* token
+  serva una parola. Qualunque misura di accorciamento lessicale fatta lì si
+  autoconferma.
+- **Gli heredoc di Git Bash mangiano i backslash.** Per file con `\n` dentro le
+  stringhe usare Write o Edit, non `cat <<'EOF'`.
+- **Aggiungere uno scenario invalida i confronti storici.** Il corpus è
+  versionato (`CORPUS_VERSION` in `bench.py`): cambiarlo azzera la sezione dei
+  progressi nella dashboard. Farlo di rado e di proposito.
 
 ## Come funziona dentro
 

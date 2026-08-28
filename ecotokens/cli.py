@@ -455,6 +455,104 @@ def ablate(
 
 
 @app.command()
+def ritenzione(
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Verifica se l'informazione che servira' sopravvive fino al prompt."""
+    if live:
+        esigi_credenziali()
+    from .retention import VARIANTI, misura_ritenzione
+
+    console.print(
+        "[dim]Non misura se la risposta e' giusta - servirebbe un modello, e un "
+        "modello che ne giudica un altro e' un metro con opinioni. Misura la "
+        "domanda piu' piccola e deterministica che ci sta dentro: l'informazione "
+        "necessaria e' arrivata fino al prompt? Se non c'e', nessun modello puo' "
+        "rispondere.[/]\n"
+    )
+    esiti = asyncio.run(misura_ritenzione(live=live))
+
+    tabella = Table(title="Ritenzione: i fatti piantati sono ancora nel prompt?")
+    tabella.add_column("Carico")
+    tabella.add_column("Configurazione")
+    tabella.add_column("Ritenzione", justify="right")
+    tabella.add_column("Token", justify="right")
+    tabella.add_column("Riassunti nuovi", justify="right")
+    tabella.add_column("Perduti")
+    for voce in esiti:
+        quota = voce.quota
+        stile = "green" if quota == 1 else "red" if quota == 0 else "yellow"
+        tabella.add_row(
+            voce.scenario,
+            voce.variante,
+            f"[{stile}]{quota * 100:.0f}%[/]",
+            f"{voce.prompt_tokens:,}",
+            str(voce.riassunti_nuovi),
+            ", ".join(voce.perduti) or "[dim]-[/]",
+        )
+    console.print(tabella)
+
+    for nome, descrizione in VARIANTI:
+        console.print(f"[dim]  {nome}: {descrizione}[/]")
+    console.print(
+        "\n[yellow]I token non sono confrontabili fra varianti potate.[/] Due "
+        "esecuzioni possono trovarsi in punti diversi del ciclo di compattazione, "
+        "e chi riassume un turno prima ha un prompt molto piu' corto per una "
+        "ragione che non c'entra con lo stadio in esame - guardare la colonna dei "
+        "riassunti nuovi. La colonna che regge il confronto e' la ritenzione."
+    )
+    if not live:
+        console.print(
+            "[dim]Con il simulatore l'estrattore di memoria e' perfetto per "
+            "ipotesi: i fatti entrano nel deposito senza passare da un modello. "
+            "Il numero della memoria e' quindi un limite superiore - dice se un "
+            "fatto estratto arriva al prompt, non se l'estrazione lo avrebbe "
+            "trovato. Quella meta' si misura solo con --live.[/]"
+        )
+
+
+@app.command()
+def memoria() -> None:
+    """Confronta le due modalita' di recupero della memoria, sul costo."""
+    from .retention import misura_memoria
+
+    esiti = asyncio.run(misura_memoria())
+    per: dict[int, dict[str, object]] = {}
+    for voce in esiti:
+        per.setdefault(voce.turni, {})[voce.modalita] = voce
+
+    tabella = Table(title="Memoria: fatti in coda contro fatti nel prefisso in cache")
+    tabella.add_column("Turni", justify="right")
+    tabella.add_column("In coda (1x sempre)", justify="right")
+    tabella.add_column("Nel prefisso (0,1x dopo)", justify="right")
+    tabella.add_column("Differenza", justify="right")
+    for turni in sorted(per):
+        coda = per[turni]["pertinente"]
+        prefisso = per[turni]["stabile"]
+        delta = (coda.cost_usd - prefisso.cost_usd) / coda.cost_usd if coda.cost_usd else 0.0
+        stile = "green" if delta > 0 else "red" if delta < 0 else "dim"
+        tabella.add_row(
+            str(turni),
+            f"${coda.cost_usd:.5f}",
+            f"${prefisso.cost_usd:.5f}",
+            f"[{stile}]{delta * 100:+.1f}%[/]",
+        )
+    console.print(tabella)
+    console.print(
+        "[dim]La potatura resta spenta di proposito: accendendola le due esecuzioni "
+        "finiscono in punti diversi del ciclo di compattazione e la differenza di "
+        "costo diventa illeggibile.[/]"
+    )
+    console.print(
+        "\n[yellow]Sul costo il prefisso perde[/], ed e' comunque il default. "
+        "L'ipotesi di partenza diceva +21% e la misura dice il contrario: il blocco "
+        "e' piccolo e la scrittura in cache si paga 1,25x. Vince su un altro asse - "
+        "il recupero per pertinenza e' lessicale, e su fatti scritti telegrafici non "
+        "trova niente. Vedi [cyan]ecotokens ritenzione[/], scenario parole-diverse."
+    )
+
+
+@app.command()
 def compaction(
     live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
 ) -> None:

@@ -43,10 +43,26 @@ def make_context(settings, messages, **overrides):
 # --- testo del gateway ----------------------------------------------------
 
 
-def test_ogni_voce_del_catalogo_e_piu_corta_di_prima():
-    """Se una voce cresce, e' una regressione: va vista, non nascosta."""
-    cresciute = [voce.key for voce in CATALOG if voce.saved < 0]
+def test_ogni_voce_pagata_a_ogni_richiesta_e_piu_corta_di_prima():
+    """Se cresce cio' che si rispedisce sempre, e' una regressione."""
+    cresciute = [
+        voce.key for voce in CATALOG if voce.su_ogni_richiesta and voce.saved < 0
+    ]
     assert cresciute == [], f"voci diventate piu' lunghe: {cresciute}"
+
+
+def test_un_istruzione_interna_puo_allungarsi_se_accorcia_cio_che_produce():
+    """Le regole dell'estrattore si pagano una volta, i fatti a ogni richiesta.
+
+    Sono cresciute di proposito: chiedono fatti telegrafici. Un fatto scritto
+    come frase costa ~25 token e uno telegrafico ~4, e i fatti si rispediscono
+    a ogni richiesta successiva mentre le regole no. Il conto si chiude alla
+    seconda richiesta. L'invariante "tutto piu' corto" avrebbe bocciato proprio
+    questo, ed e' il motivo per cui la tavola distingue i due ritmi di paga.
+    """
+    regole = next(voce for voce in CATALOG if voce.key == "regole-memoria")
+    assert regole.su_ogni_richiesta is False
+    assert "telegrafico" in regole.text
 
 
 def test_il_catalogo_e_coerente_con_i_totali():

@@ -701,5 +701,89 @@ TUNING_LOG: list[TuningEntry] = [
             "conteggio sbagliato, e sembra giusto."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Un'ottimizzazione contata da un anno e mai applicata",
+        finding=(
+            "La tavola in `wording` raccoglie il testo che il gateway aggiunge di suo "
+            "e ne dichiara la forma corta accanto a quella precedente; `ecotokens "
+            "overhead` ne stampa il risparmio. Ma la tavola e' un elenco: non obbliga "
+            "nessuno a usarla. Due punti la ignoravano. `memory.py` importava "
+            "`MEMORY_OPEN` e poi scriveva a mano `<memoria-rilevante>`; `context.py` "
+            "faceva lo stesso con la forma lunga del riassunto. Ventiquattro token per "
+            "richiesta che il cruscotto contava come gia' risparmiati e che nessuna "
+            "richiesta ha mai risparmiato."
+        ),
+        effect=(
+            "E' la variante peggiore della famiglia, per una ragione asimmetrica: "
+            "un'ottimizzazione **mancante** prima o poi la si cerca, una **contata e "
+            "mancante** no, perche' il cruscotto dice che c'e'. Corretti i due punti e "
+            "aggiunti test che guardano il codice invece della tavola: nessuna forma "
+            "lunga puo' restare scritta a mano, e nessuna voce della tavola puo' "
+            "restare senza qualcuno che la emetta - il secondo copre il difetto "
+            "simmetrico, che sarebbe contare un costo mai pagato."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Potare perdeva il 100% dei fatti, e nessuno strumento lo vedeva",
+        finding=(
+            "Quattro funzioni - memoria, cache semantica, declassamento di modello, "
+            "effort minimo - erano spente o non misurate per lo stesso motivo: il banco "
+            "vede il loro costo e non il loro beneficio. Non erano quattro problemi, "
+            "era uno solo. La domanda intera (la risposta e' ancora giusta?) non e' "
+            "misurabile senza un modello che ne giudica un altro, cioe' un metro con "
+            "opinioni; ne contiene pero' una piu' piccola e deterministica - "
+            "l'informazione necessaria e' arrivata fino al prompt? Se non c'e', nessun "
+            "modello puo' rispondere, e la verifica e' la ricerca di una stringa. Nuovo "
+            "comando `ecotokens ritenzione`: pianta un dato a un turno, lo chiede venti "
+            "turni dopo, guarda il prompt in partenza."
+        ),
+        effect=(
+            "Il primo risultato: con potatura e riassunto accesi sopravvive lo **zero "
+            "per cento** dei fatti piantati, su ogni scenario; con la memoria accesa, "
+            "il cento. Il banco non poteva dirlo in nessun modo, e cambia il senso "
+            "della potatura - resta una difesa contro l'overflow, non un'ottimizzazione "
+            "da accendere a cuor leggero. Due difetti di metodo trovati costruendolo. "
+            "Le domande finali fatte tutte a partire dalla stessa cronologia sono "
+            "biforcazioni, non una conversazione: il gateway le riconosce come sessioni "
+            "diverse, e la memoria risultava persa quando era solo cambiata sessione. E "
+            "i token di due varianti potate non sono confrontabili, perche' possono "
+            "trovarsi in punti diversi del ciclo di compattazione: si e' vista la "
+            "memoria risultare piu' economica della sola potatura per aver fatto "
+            "scattare un riassunto un turno prima. La tabella riporta ora i riassunti "
+            "nuovi accanto ai token, cosi' l'anomalia si spiega invece di essere creduta."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Accorciare i fatti ha rotto il modo di ritrovarli",
+        finding=(
+            "I fatti della memoria si rispediscono a ogni richiesta successiva, quindi "
+            "vanno scritti telegrafici: 'Porta: 8443' costa 4 token, 'La porta di "
+            "ascolto deve restare la 8443' ne costa 25. Cambiate le regole date "
+            "all'estrattore, il risparmio vale sotto qualunque tokenizer, perche' non "
+            "e' una sostituzione lessicale - e' dire di meno. Ma il recupero dei fatti "
+            "e' **lessicale**: cerca le parole della domanda dentro i fatti, e "
+            "accorciandoli si sono tolte le parole su cui il match si reggeva. "
+            "Misurato: su domande che usano sinonimi - 'su quale interfaccia devo "
+            "mettermi in ascolto?' contro 'Porta: 8443' - il recupero per pertinenza "
+            "trova **zero fatti su tre**. Con i fatti in prosa ne trovava tre su tre."
+        ),
+        effect=(
+            "Due decisioni giuste che, prese insieme, si rompevano a vicenda, e nessuna "
+            "delle misure esistenti poteva vederlo: una guarda i token, l'altra la "
+            "ritenzione a parita' di parole. Serviva uno scenario in cui domanda e "
+            "fatto non condividono niente. Nuova modalita' di recupero stabile, ora "
+            "predefinita: tutti i fatti della sessione, in ordine d'inserimento fisso, "
+            "dentro il prefisso memorizzabile invece che in coda. Immune per "
+            "costruzione. L'ipotesi diceva che sarebbe stata anche piu' economica, con "
+            "un'aritmetica che dava +21% a venti turni: **la misura dice il contrario**, "
+            "fra -0,4% e -2,2%, perche' il blocco e' piccolo e la scrittura in cache si "
+            "paga 1,25x. Il default cambia lo stesso, ma per l'altro asse - il 2% e' il "
+            "prezzo di un recupero che funziona - e l'aritmetica fatta a tavolino resta "
+            "il modo piu' rapido di convincersi di una cosa falsa."
+        ),
+    ),
 
 ]
