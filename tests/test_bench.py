@@ -148,6 +148,12 @@ async def test_l_ablazione_attribuisce_il_risparmio():
         "cache esatta",
         "effort adattivo",
         "riscrittura prompt",
+        # Le ultime due scambiano fedelta' contro spesa, e stanno in fondo
+        # apposta: separate, e non fuse in un gradino solo, perche' la riga
+        # "modello economico" vale piu' di tutte le altre messe insieme e
+        # nasconderla dentro un'altra falserebbe l'attribuzione.
+        "effort sempre basso",
+        "modello economico",
     ]
     # Il cumulato dell'ultimo gradino e' il risparmio totale della catena.
     riferimento = run.totals(BASELINE_VARIANT).cost_usd

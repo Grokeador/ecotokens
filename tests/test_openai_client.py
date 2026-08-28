@@ -27,7 +27,7 @@ from ecotokens.simulator import create_stub
 
 @pytest_asyncio.fixture
 async def openai_client():
-    settings = Settings()
+    settings = Settings(profilo="prudente")
     settings.storage.path = ":memory:"
     settings.memory.enabled = False
     settings.semantic_cache.enabled = False

@@ -261,6 +261,18 @@ class RouterSettings(BaseModel):
     # cache e non cambia modello: e' il risparmio sicuro.
     effort_downshift: bool = True
     simple_effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    # Quando abbassare l'effort.
+    #
+    # "adattivo" giudica la difficolta' della domanda e abbassa solo dove
+    # sembra sicuro. "sempre_basso" salta il giudizio e scende sempre a
+    # `simple_effort`, tranne quando il client ha chiesto un effort suo -
+    # quello non si tocca mai, in nessuna modalita'.
+    #
+    # La leva deve stare qui e non in `upstream.default_effort`: quella si
+    # applica a monte di tutti gli stadi, quindi varrebbe anche per il
+    # riferimento "senza gateway" del banco, e il confronto misurerebbe due
+    # configurazioni identiche credendo di misurarne due diverse.
+    effort_policy: Literal["adattivo", "sempre_basso"] = "adattivo"
     # Cosa fare quando la domanda e' semplice ma il modello potrebbe dover
     # scegliere un tool. Prima qui c'era un rifiuto in blocco, e costava caro:
     # misurato, i turni con tool sono il 45% del traffico e comprendono il
@@ -285,6 +297,19 @@ class RouterSettings(BaseModel):
     # Livello 2: cambio di modello. Le cache sono legate al modello, quindi
     # cambiarlo a meta' conversazione azzera il prompt caching.
     model_downgrade: bool = False
+    # Quando declassare, una volta che `model_downgrade` e' acceso.
+    #
+    # "semplici" applica il criterio stretto: niente tool in gioco e domanda
+    # corta. E' prudente e rende poco - misurato, il router interviene di rado
+    # e il risparmio complessivo passa dal 75,2% al 78,6%.
+    #
+    # "sempre" declassa ogni sessione al primo turno, senza giudizio di
+    # difficolta'. Porta il risparmio oltre il 95%, ed e' onesto dire perche':
+    # non e' un'ottimizzazione, e' **un'altra risposta a un prezzo diverso**.
+    # Il banco misura quanto e' lunga una risposta, non se e' giusta, quindi
+    # quel guadagno e' interamente reale e il suo costo interamente non
+    # misurato. Da accendere solo sapendolo.
+    downgrade_policy: Literal["semplici", "sempre"] = "semplici"
     # Se attivo, il modello si sceglie una volta per sessione e non cambia.
     model_locked_per_session: bool = True
     downgrade_target: str = "claude-haiku-4-5"
@@ -306,7 +331,28 @@ class StorageSettings(BaseModel):
     store_message_content: bool = True
 
 
+PROFILI = ("prudente", "aggressivo")
+
+
 class Settings(BaseModel):
+    # Quale compromesso fra spesa e fedelta' della risposta.
+    #
+    # **prudente** - nessuno stadio puo' cambiare il *contenuto* di una
+    # risposta. Il modello resta quello chiesto dal client e l'effort scende
+    # solo dove il router giudica sicuro farlo. Misurato: 75,2% di risparmio,
+    # e ogni punto di quel 75 e' senza contropartita.
+    #
+    # **aggressivo** - ogni sessione viene servita dal modello piu' economico
+    # e con l'effort al minimo. Misurato: 95,3%. Venti punti in piu', e vanno
+    # letti sapendo che **non sono un'ottimizzazione**: sono un'altra risposta
+    # a un prezzo diverso. Il banco sa quanto e' lunga una risposta, non se e'
+    # giusta, quindi il guadagno e' interamente misurato e il suo costo
+    # interamente no.
+    #
+    # Il profilo imposta dei default: qualunque campo scritto esplicitamente
+    # nel file di configurazione vince su di esso.
+    profilo: Literal["prudente", "aggressivo"] = "aggressivo"
+
     server: ServerSettings = Field(default_factory=ServerSettings)
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
@@ -319,6 +365,43 @@ class Settings(BaseModel):
     semantic_cache: SemanticCacheSettings = Field(default_factory=SemanticCacheSettings)
     router: RouterSettings = Field(default_factory=RouterSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.profilo == "aggressivo":
+            self.applica_profilo_aggressivo(solo_default=True)
+
+    def applica_profilo_aggressivo(self, *, solo_default: bool = False) -> None:
+        """Accende le leve che scambiano fedelta' contro spesa.
+
+        Sono tre e stanno tutte nel router, non per caso: il router e' uno
+        stadio, quindi resta spento nella variante di riferimento del banco.
+        La stessa cosa scritta in `upstream.default_effort` varrebbe anche per
+        il riferimento, e il confronto misurerebbe due configurazioni identiche
+        credendo di misurarne due diverse.
+
+        Con ``solo_default`` i campi che l'utente ha scritto a mano non vengono
+        toccati. E' cosi' che il profilo viene applicato all'avvio: chi scrive
+        `model_downgrade = false` nel proprio file di configurazione vuole
+        quello, e un profilo che glielo sovrascrivesse sarebbe una
+        configurazione che mente - il caso peggiore, perche' non lascia
+        traccia.
+        """
+        scritti = self.router.model_fields_set if solo_default else frozenset()
+        for campo, valore in (
+            ("enabled", True),
+            ("model_downgrade", True),
+            ("downgrade_policy", "sempre"),
+            ("effort_policy", "sempre_basso"),
+        ):
+            if campo not in scritti:
+                setattr(self.router, campo, valore)
+
+    def applica_profilo_prudente(self) -> None:
+        """Riporta il router a non toccare il contenuto delle risposte."""
+        self.router.model_downgrade = False
+        self.router.downgrade_policy = "semplici"
+        self.router.effort_policy = "adattivo"
+        self.router.effort_with_tools = "medium"
 
 
 def _find_config(explicit: str | Path | None) -> Path | None:

@@ -15,8 +15,16 @@ from ecotokens.simulator import StubState, create_stub
 
 @pytest.fixture
 def settings() -> Settings:
-    """Configurazione di test: database in memoria, stadi rumorosi spenti."""
-    config = Settings()
+    """Configurazione di test: database in memoria, stadi rumorosi spenti.
+
+    Profilo **prudente** di proposito. Il profilo predefinito declassa il
+    modello, e un test che verifica dove finisce un breakpoint di cache o come
+    viene tradotto un parametro non deve dipendere da quella scelta: se
+    cambiasse, fallirebbe una dozzina di test che non c'entrano niente, e il
+    guasto sembrerebbe stare dove non sta. Il profilo aggressivo ha i suoi
+    test, in `test_profilo.py`.
+    """
+    config = Settings(profilo="prudente")
     config.storage.path = ":memory:"
     config.memory.enabled = False
     config.semantic_cache.enabled = False

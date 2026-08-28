@@ -152,12 +152,17 @@ repository:
 
 | Carico | Senza gateway | Con gateway | Risparmio | Prompt da cache |
 |---|---:|---:|---:|---:|
-| chat, 8 turni con system prompt grande | $0,4359 | $0,1283 | **71%** | 86% |
-| ciclo agentico, 6 turni da 6 tool | $0,6249 | $0,3195 | **49%** | 73% |
-| domande frequenti ripetute | $0,3779 | $0,0509 | **86%** | 73% |
-| prompt verbosi, 8 turni | $0,3338 | $0,1855 | **44%** | 82% |
-| costruzione di EcoTokens | $4,4011 | $0,9796 | **78%** | 72% |
-| **totale** | **$6,1735** | **$1,6304** | **74%** | 72% |
+| chat, 8 turni con system prompt grande | $0,4359 | $0,0257 | **94%** | 86% |
+| ciclo agentico, 6 turni da 6 tool | $0,6249 | $0,0521 | **92%** | 72% |
+| domande frequenti ripetute | $0,3779 | $0,0180 | **95%** | — |
+| prompt verbosi, 8 turni | $0,3338 | $0,0290 | **91%** | 54% |
+| costruzione di EcoTokens | $5,2262 | $0,2048 | **96%** | 82% |
+| **totale** | **$6,9987** | **$0,3294** | **95%** | 79% |
+
+Sono i numeri del profilo **aggressivo**, quello predefinito. Con il profilo
+`prudente` — che non tocca mai il contenuto di una risposta — il totale è
+**75,2%**. La differenza e cosa la produce stanno nella sezione [I due
+profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione).
 
 Lo scenario `costruzione` non è inventato: legge i sorgenti veri del progetto e
 ricostruisce il traffico che un agente di codice produce scrivendolo.
@@ -170,6 +175,60 @@ ricostruisce il traffico che un agente di codice produce scrivendolo.
 > $6,3002 a $6,6338, un +5,3% che nessuna modifica al gateway aveva prodotto.
 > `CORPUS_VERSION` non se ne accorge, perché l'elenco degli scenari non cambia:
 > cambia il loro contenuto.
+
+## I due profili, e cosa distingue davvero un'ottimizzazione
+
+Il gateway esce configurato sul profilo **aggressivo**, che risparmia il 95,3%.
+Prima di lasciarlo così vale la pena sapere cosa lo separa dall'altro, perché
+non è una differenza di grado.
+
+| | `prudente` | `aggressivo` *(predefinito)* |
+|---|---|---|
+| Risparmio misurato | 75,2% | **95,3%** |
+| Modello | quello chiesto dal client | il più economico, fissato a inizio sessione |
+| Effort | abbassato dove il router giudica sicuro | sempre al minimo |
+| Contenuto delle risposte | mai toccato | **cambia** |
+
+I venti punti di differenza vengono quasi tutti da una riga sola
+dell'ablazione: il cambio di modello vale il **17,5%**, più di tutti gli altri
+stadi messi insieme tranne il prompt caching.
+
+Ed è qui che serve una distinzione che il resto di questo README dà per
+scontata. I primi 75 punti sono **ottimizzazioni**: la risposta che ricevi è la
+stessa che avresti ricevuto senza il gateway, solo pagata meno. Gli ultimi venti
+non lo sono. Sono un'altra risposta a un prezzo diverso.
+
+Il banco misura quanto è *lunga* una risposta, non se è *giusta*. Quindi quel
+17,5% è interamente misurato e il suo costo interamente no — e nessuna misura
+futura potrà cambiarlo, perché la qualità non è una grandezza che questo
+strumento sappia leggere.
+
+```toml
+profilo = "prudente"   # per tornare a non toccare mai il contenuto
+```
+
+Il profilo imposta dei **default**: qualunque campo scritto a mano nel file di
+configurazione vince su di esso. Chi scrive `model_downgrade = false` sotto
+`[router]` ottiene quello, profilo aggressivo o no.
+
+#### Cosa il profilo aggressivo continua a non fare
+
+Tre garanzie sopravvivono a entrambi i profili, e sono coperte da test:
+
+- **Un `reasoning_effort` chiesto esplicitamente dal client non viene mai
+  toccato.** Decidere al posto di chi non ha deciso è un'ottimizzazione;
+  sovrascrivere chi ha deciso è ignorare un'istruzione.
+- **Il modello si sceglie una volta per sessione e non cambia più.** Cambiarlo
+  a metà butterebbe via tutta la cache accumulata, che è legata al modello.
+- **Il declassamento lascia traccia.** Haiku 4.5 richiede 4096 token di
+  prefisso contro i 512 di Opus 5: fra le due soglie la cache non si forma e
+  l'API non lo segnala. Le note della richiesta lo dicono.
+
+Su quest'ultimo punto una misura vale più di un avvertimento. Con un system
+prompt di 100 o 300 parole il profilo aggressivo perde **del tutto** la cache —
+e resta comunque più economico, perché il modello costa cinque volte meno su
+input *e* output e la compensa. Il rischio c'è ma non si è materializzato sui
+carichi provati.
 
 #### La porta nativa
 
@@ -446,6 +505,83 @@ stats` e la dashboard lo mostrano appena c'è traffico registrato. È per questo
 che `usage_events` porta ora una colonna `cache_ttl` — senza sapere con quale
 TTL una scrittura è stata pagata, il costo di una scrittura a un'ora verrebbe
 calcolato come se fosse a cinque minuti, cioè un quarto del vero.
+
+### Fin dove si può arrivare, e cosa lo ferma
+
+Il 74,9% in testa invita a una domanda sola: perché non di più? La risposta è
+aritmetica, e conviene darla insieme al numero.
+
+```bash
+ecotokens ceiling --goal 99
+```
+
+Le leve non sono tutte della stessa natura. Le prime non costano niente che non
+sia già misurato; le ultime scambiano denaro contro **qualità**, e la qualità
+questo banco non la misura — sa quanto è lunga una risposta, non se è giusta.
+
+| Leva | Costo | Risparmio | In cambio di |
+|---|---:|---:|---|
+| profilo `prudente` | $1,6716 | **75,2%** | niente che non sia già misurato |
+| + effort minimo sui tool | $1,5725 | 76,4% | la correttezza delle chiamate agli strumenti |
+| + effort sempre basso | $1,4370 | 77,8% | la profondità di ragionamento su tutto |
+| + modello economico *(= profilo `aggressivo`)* | $0,3294 | **95,3%** | non è più la stessa risposta |
+| + modalità batch | $0,1647 | **97,6%** | l'immediatezza: esito entro 24 ore, non dietro un'interfaccia |
+
+#### Il pavimento
+
+Sotto una certa cifra non si scende, perché il modello deve pur rispondere.
+
+| Voce | Costo | Perché resta |
+|---|---:|---|
+| output generato | $0,0438 | nessuna cache lo sconta: non esisteva prima della richiesta |
+| input mai visto | $0,0852 | contenuto nuovo, va trasmesso almeno una volta |
+| riletture | $0,0339 | già scontate a 0,1×, ma non gratuite |
+| **totale** | **$0,1629** | massimo teorico: **97,6%** |
+
+Il conto è deliberatamente generoso, e conviene dire quanto: valuta l'input nuovo
+a prezzo pieno invece che a 1,25×, lo fa al modello più economico del listino, e
+applica anche lo sconto del 50% della **Message Batches API** — l'unico meccanismo
+di sconto che il gateway non usa, perché rende le richieste asincrone. È un limite
+che nessuna configurazione può battere, non una stima realistica.
+
+**Ne segue che il 99% su questo corpus è impossibile.** Richiederebbe di stare
+sotto $0,0666; il pavimento è $0,1629, due volte e mezzo tanto. Non è un obiettivo
+difficile: è un obiettivo che l'aritmetica esclude, e averlo verificato dopo aver
+sommato *ogni* sconto documentato è ciò che rende la conclusione una dimostrazione
+invece che una resa.
+
+#### Il risparmio dipende dal traffico, non dal gateway
+
+Detto questo, il 99% esiste. Non è una proprietà del gateway ma del **carico**:
+su richieste tutte diverse l'unica leva è il prefisso condiviso, su richieste che
+si ripetono entra la cache esatta — e quella non sconta il prezzo di un token, lo
+azzera.
+
+| Carico | Richieste | Senza | Con | Risparmio |
+|---|---:|---:|---:|---:|
+| 12 domande ×1 | 4 | $0,1260 | $0,0509 | 59,6% |
+| 6 domande ×2 | 8 | $0,2519 | $0,0509 | 79,8% |
+| 4 domande ×3 | 12 | $0,3779 | $0,0509 | 86,5% |
+| 3 domande ×5 | 15 | $0,4723 | $0,0428 | 90,9% |
+| 2 domande ×10 | 20 | $0,6297 | $0,0347 | 94,5% |
+| 1 domanda ×20 | 20 | $0,6296 | $0,0266 | 95,8% |
+| 1 domanda ×50 | 50 | $1,5740 | $0,0266 | **98,3%** |
+
+Su richieste tutte uguali il 99% arriva a circa **85 ripetizioni**, il 99,9% a
+circa 850. La prima richiesta si paga sempre, quindi la curva sale verso il 100%
+senza toccarlo.
+
+Se il tuo traffico assomiglia alle ultime righe — FAQ, classificazioni, estrazioni
+ripetute su testi simili — il numero che vedrai sarà molto più alto di quello del
+corpus standard. Se assomiglia a `costruzione`, sarà più basso. Il numero unico non
+esiste, ed è il motivo per cui questa tabella sta nel README accanto a quello di
+testa.
+
+> **Una tentazione da nominare.** Il numero in testa si alza in dieci minuti
+> aggiungendo scenari ripetitivi al corpus. Salirebbe davvero, e non
+> misurerebbe più niente: è la stessa classe di errore che occupa quasi metà del
+> [registro delle correzioni](ecotokens/tuning_log.py), commessa però di
+> proposito. Il corpus è versionato (`CORPUS_VERSION`) anche per questo.
 
 ### Comprimere la cronologia: conviene solo a una condizione
 
@@ -805,6 +941,7 @@ poi la cache venga davvero letta.
 | `ecotokens overhead` | mostra il testo che il gateway aggiunge ai prompt |
 | `ecotokens pruning` | confronta le strategie di potatura del contesto |
 | `ecotokens cachewrites` | conta le scritture in cache che nessuno rilegge |
+| `ecotokens ceiling` | dice fin dove puo' arrivare il risparmio, e cosa lo ferma |
 | `ecotokens dashboard` | genera la dashboard HTML |
 
 ## Endpoint

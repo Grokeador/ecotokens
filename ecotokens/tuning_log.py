@@ -444,4 +444,96 @@ TUNING_LOG: list[TuningEntry] = [
         ),
     ),
 
+    TuningEntry(
+        area="misura",
+        title="Il risparmio complessivo non e' un numero del gateway, e' un numero del traffico",
+        finding=(
+            "Chiesto di portare il risparmio complessivo al 99%, la prima cosa misurata e' "
+            "stato il pavimento: cio' che nessuna configurazione puo' togliere. Vale $0,1629 "
+            "contro un riferimento di $6,6574, cioe' un massimo teorico del 97,6% - e in quel "
+            "conto e' compreso anche lo sconto del 50% della Message Batches API, l'unico "
+            "meccanismo del listino che il gateway non usa. Il 99% richiederebbe di stare "
+            "sotto $0,0666: due volte e mezzo meno del pavimento. L'obiettivo non era "
+            "difficile, era escluso dall'aritmetica, e averlo verificato dopo aver sommato "
+            "*ogni* sconto documentato e' cio' che ne fa una dimostrazione invece che una "
+            "resa. Misurando invece la stessa cosa al "
+            "variare della ripetitivita' del carico, il 99% e' comparso a circa 85 "
+            "ripetizioni della stessa richiesta."
+        ),
+        effect=(
+            "Nuovo comando `ecotokens ceiling`, che risponde a un obiettivo dato con un si' o "
+            "un no argomentati invece che con un tentativo, e una sezione della dashboard che "
+            "affianca al numero di testa il perche' non sia piu' alto. La scala delle leve "
+            "tiene una colonna apposta per cio' che si da' in cambio: le ultime due "
+            "scambiano denaro contro qualita', che il banco non misura, e senza quella "
+            "colonna il 94,7% sembrerebbe un traguardo invece che un prezzo. Nessun default "
+            "e' cambiato e il corpus non e' stato toccato: alzare il numero di testa "
+            "aggiungendo scenari ripetitivi si sarebbe fatto in dieci minuti, e sarebbe "
+            "stata la stessa classe di errore del resto di questo registro, commessa pero' "
+            "di proposito."
+        ),
+    ),
+
+    TuningEntry(
+        area="gateway",
+        title="Il risparmio del 95% esiste, ma non e' fatto della stessa sostanza del 75%",
+        finding=(
+            "Portare il risparmio complessivo dal 75,2% al 95% richiede una cosa sola, e "
+            "l'ablazione la isola: il cambio di modello vale il 17,5%, piu' di tutti gli "
+            "stadi messi insieme tranne il prompt caching. Il resto - effort sempre al "
+            "minimo - ne vale 2,6. Nessuna taratura fine ha prodotto niente: sotto la "
+            "configurazione aggressiva le soglie gia' scelte sono risultate ottime, "
+            "`prune_step_turns = 7` compreso, che regge anche su un modello con un minimo "
+            "di cache otto volte piu' alto."
+        ),
+        effect=(
+            "Introdotto il profilo (`prudente` / `aggressivo`), predefinito aggressivo su "
+            "richiesta esplicita. La scala dell'ablazione ha due gradini nuovi e separati "
+            "invece di uno: fondere 'effort sempre basso' e 'modello economico' avrebbe "
+            "nascosto la riga che pesa, e una tabella che nasconde la voce piu' grossa e' "
+            "peggio di nessuna tabella. Nel README i due profili stanno in una sezione che "
+            "dice cosa li separa: i primi 75 punti sono ottimizzazioni - stessa risposta, "
+            "pagata meno - gli ultimi venti sono un'altra risposta a un prezzo diverso. Il "
+            "banco misura quanto e' lunga una risposta, non se e' giusta, quindi quel 17,5% "
+            "e' interamente misurato e il suo costo interamente no."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Il profilo sovrascriveva anche le impostazioni scritte a mano",
+        finding=(
+            "La prima versione applicava il profilo in `model_post_init` senza guardare "
+            "cosa l'utente avesse gia' deciso: chi scriveva `model_downgrade = false` nel "
+            "proprio file se lo vedeva riacceso, in silenzio. La documentazione del campo "
+            "diceva gia' il contrario - 'il profilo imposta dei default' - quindi il codice "
+            "contraddiceva la propria docstring. L'ha trovato un test scritto su quella "
+            "frase invece che sull'implementazione."
+        ),
+        effect=(
+            "Il profilo consulta ora `model_fields_set` e non tocca i campi valorizzati "
+            "esplicitamente. E' il caso peggiore fra i difetti di configurazione: una "
+            "impostazione ignorata non lascia traccia da nessuna parte, e chi la legge "
+            "continua a credere che valga."
+        ),
+    ),
+
+    TuningEntry(
+        area="gateway",
+        title="Il file di esempio dichiarava un profilo e ne configurava un altro",
+        finding=(
+            "Introdotto il profilo, il file di esempio e' rimasto con i valori prudenti "
+            "scritti a mano sotto [router] mentre in testa dichiarava `profilo = "
+            "\"aggressivo\"`. I campi espliciti vincono sul profilo - ed e' giusto che sia "
+            "cosi' - quindi chi lo avesse copiato avrebbe ottenuto il 75% credendo di avere "
+            "il 95%, senza niente che glielo segnalasse."
+        ),
+        effect=(
+            "I tre campi governati dal profilo sono ora commentati, con scritto accanto che "
+            "toglierli dal commento significa decidere a mano. Un test carica il file di "
+            "esempio vero e verifica che produca davvero il profilo che dichiara. Una "
+            "configurazione che si contraddice e' peggio di una sbagliata: la sbagliata "
+            "prima o poi si nota."
+        ),
+    ),
+
 ]

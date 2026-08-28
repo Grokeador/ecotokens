@@ -38,6 +38,11 @@ from .bench import (
     stage_contributions,
     stage_progress,
 )
+from .ceiling import (
+    measure_ceiling,
+    measure_repetition_curve,
+    ripetizioni_per_obiettivo,
+)
 from .config import Settings
 from .tuning_log import TUNING_LOG
 from .workloads import all_scenarios
@@ -201,6 +206,45 @@ async def build_dashboard_data(
             scritture = await measure_cache_writes()
             dati["cache_writes"] = [voce.to_dict() for voce in scritture]
 
+            tetto = await measure_ceiling()
+            dati["ceiling_baseline"] = tetto.baseline_usd
+            dati["ceiling_max"] = tetto.tetto_teorico()
+            dati["ceiling"] = [
+                {
+                    "etichetta": passo.etichetta,
+                    "descrizione": passo.descrizione,
+                    "in_cambio": passo.in_cambio,
+                    "sicura": passo.sicura,
+                    "cost_usd": passo.cost_usd,
+                    "saved_ratio": passo.saved_ratio(tetto.baseline_usd),
+                }
+                for passo in tetto.steps
+            ]
+            dati["ceiling_floor"] = (
+                {
+                    "output_usd": tetto.floor.output_usd,
+                    "input_nuovo_usd": tetto.floor.input_nuovo_usd,
+                    "riletture_usd": tetto.floor.riletture_usd,
+                    "totale_usd": tetto.floor.totale_usd,
+                }
+                if tetto.floor
+                else {}
+            )
+
+            curva = await measure_repetition_curve()
+            dati["repetition"] = [
+                {
+                    "uniche": punto.uniche,
+                    "ripetizioni": punto.ripetizioni,
+                    "richieste": punto.richieste,
+                    "baseline_usd": punto.baseline_usd,
+                    "cost_usd": punto.cost_usd,
+                    "saved_ratio": punto.saved_ratio,
+                }
+                for punto in curva
+            ]
+            dati["repetition_for_99"] = ripetizioni_per_obiettivo(curva, 0.99)
+
             dati["progress"] = await stage_progress(store, dati["stages"])
 
         dati["history"] = _summarise_history(await load_runs(store, limit=12))
@@ -215,7 +259,11 @@ async def build_dashboard_data(
 
 def _config_snapshot(settings: Settings) -> list[dict[str, Any]]:
     """Stato degli stadi, come lo vedrebbe una richiesta in arrivo adesso."""
+    aggressivo = settings.profilo == "aggressivo"
     return [
+        {"name": f"profilo: {settings.profilo}", "enabled": True,
+         "detail": "il modello e l'effort delle risposte cambiano"
+                   if aggressivo else "nessuno stadio tocca il contenuto"},
         {"name": "prompt caching", "enabled": settings.cache_planner.enabled,
          "detail": f"max {settings.cache_planner.max_breakpoints} breakpoint"},
         {"name": "cache esatta", "enabled": settings.exact_cache.enabled,
@@ -342,6 +390,7 @@ def _body(data: dict[str, Any]) -> str:
         _cache_key(data),
         _overhead(data),
         _cache_writes(data),
+        _ceiling(data),
         _calibration(data),
         _progress(data),
         _tuning(data),
@@ -940,6 +989,147 @@ def _cache_writes(data: dict[str, Any]) -> str:
   rileggerla. <strong>Di coda</strong> è l'ultima scrittura di una sessione, che nessuno
   poteva sapere fosse l'ultima — e che un'altra sessione con lo stesso prefisso potrebbe
   ancora rileggere. Sommarle darebbe un numero più grosso e meno utile.</p>
+</section>"""
+
+def _ceiling(data: dict[str, Any]) -> str:
+    """Fin dove puo' arrivare il risparmio, e cosa lo ferma.
+
+    Il numero di testa di questa pagina invita a una domanda sola: perche' non
+    di piu'? La risposta e' aritmetica e va data insieme al numero, altrimenti
+    la si cerca dove non c'e' - o peggio, la si ottiene ritoccando il corpus.
+    """
+    passi = data.get("ceiling") or []
+    pavimento = data.get("ceiling_floor") or {}
+    curva = data.get("repetition") or []
+    if not passi or not pavimento:
+        return ""
+
+    riferimento = float(data.get("ceiling_baseline") or 0.0)
+    massimo = float(data.get("ceiling_max") or 0.0)
+
+    righe_passi = []
+    for passo in passi:
+        quota = passo["saved_ratio"]
+        sicura = passo["sicura"]
+        stato = "good" if sicura else "idle"
+        scambio = (
+            '<span class="muted">niente che non sia già misurato</span>'
+            if sicura
+            else _esc(passo["in_cambio"])
+        )
+        righe_passi.append(
+            f"""<tr>
+      <td class="stage-name">{_esc(passo['etichetta'])}
+        <span class="note">{_esc(passo['descrizione'])}</span></td>
+      <td class="num mono">{_fmt_usd(passo['cost_usd'])}</td>
+      <td class="num"><span class="pill pill-{stato}">{_fmt_pct(quota)}</span></td>
+      <td>{scambio}</td>
+    </tr>"""
+        )
+
+    righe_pavimento = []
+    for chiave, etichetta, perche in (
+        ("output_usd", "Output generato",
+         "nessuna cache lo sconta: non esisteva prima della richiesta"),
+        ("input_nuovo_usd", "Input mai visto",
+         "contenuto nuovo, va trasmesso almeno una volta"),
+        ("riletture_usd", "Riletture da cache",
+         "già scontate a 0,1×, ma non gratuite"),
+    ):
+        righe_pavimento.append(
+            f"""<tr>
+      <td class="stage-name">{etichetta}</td>
+      <td class="num mono">{_fmt_usd(pavimento[chiave])}</td>
+      <td class="muted">{perche}</td>
+    </tr>"""
+        )
+    righe_pavimento.append(
+        f"""<tr>
+      <td class="stage-name"><strong>Totale</strong></td>
+      <td class="num mono"><strong>{_fmt_usd(pavimento['totale_usd'])}</strong></td>
+      <td class="muted">il massimo teorico è quindi {_fmt_pct(massimo)}</td>
+    </tr>"""
+    )
+
+    righe_curva = []
+    for punto in curva:
+        quota = punto["saved_ratio"]
+        stato = "good" if quota >= 0.95 else "idle"
+        righe_curva.append(
+            f"""<tr>
+      <td class="stage-name">{punto['uniche']} domande &times;{punto['ripetizioni']}</td>
+      <td class="num mono muted">{punto['richieste']}</td>
+      <td class="num mono">{_fmt_usd(punto['baseline_usd'])}</td>
+      <td class="num mono">{_fmt_usd(punto['cost_usd'])}</td>
+      <td class="num"><span class="pill pill-{stato}">{_fmt_pct(quota)}</span></td>
+    </tr>"""
+        )
+
+    necessarie = data.get("repetition_for_99")
+    chiusura = (
+        f"""<p>Su richieste tutte uguali il 99% arriva a circa
+    <strong>{necessarie} ripetizioni</strong> della stessa domanda: la cache esatta non
+    sconta il prezzo di un token, lo azzera. La prima richiesta però si paga sempre,
+    quindi la curva sale verso il 100% senza toccarlo.</p>"""
+        if necessarie
+        else ""
+    )
+
+    return f"""<section class="panel">
+  <div class="panel-head">
+    <h2>Fin dove si può arrivare</h2>
+    <p>Il numero in testa a questa pagina invita a una domanda sola: perché non di
+    più? La risposta è aritmetica, e conviene darla insieme al numero.</p>
+    <p>Le leve non sono tutte della stessa natura. Le prime non costano niente che non
+    sia già misurato; le ultime scambiano denaro contro <strong>qualità</strong>, e la
+    qualità questo banco non la misura — sa quanto è lunga una risposta, non se è
+    giusta. Metterle nella stessa colonna farebbe sembrare il 95% un traguardo
+    raggiunto invece che un prezzo pagato.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Leva</th><th class="num">Costo</th><th class="num">Risparmio</th>
+      <th>In cambio di</th></tr></thead>
+      <tbody>
+    {"".join(righe_passi)}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-head" style="margin-top:1.5rem">
+    <h3>Il pavimento</h3>
+    <p>Sotto una certa cifra non si scende, perché il modello deve pur rispondere.
+    Valutato al modello più economico del listino e con l'input a prezzo pieno anziché
+    a 1,25× — è un limite che nessuna configurazione può battere, non una stima
+    realistica.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Voce</th><th class="num">Costo</th><th>Perché resta</th></tr></thead>
+      <tbody>
+    {"".join(righe_pavimento)}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-head" style="margin-top:1.5rem">
+    <h3>Il risparmio dipende dal traffico, non dal gateway</h3>
+    <p>«Quanto risparmia EcoTokens» non ha una risposta sola. Su richieste tutte
+    diverse l'unica leva è il prefisso condiviso; su richieste che si ripetono entra la
+    cache esatta, e quella non sconta un token: lo azzera.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Carico</th><th class="num">Richieste</th><th class="num">Senza</th>
+      <th class="num">Con</th><th class="num">Risparmio</th></tr></thead>
+      <tbody>
+    {"".join(righe_curva)}
+      </tbody>
+    </table>
+  </div>
+  {chiusura}
+  <p class="caveat">Il numero di testa è quello del corpus standard, che mescola
+  carichi ripetitivi e carichi tutti diversi, su un riferimento di
+  {_fmt_usd(riferimento)}. Alzarlo aggiungendo ripetizioni al corpus si farebbe in
+  dieci minuti, e non misurerebbe più niente.</p>
 </section>"""
 
 def _calibration(data: dict[str, Any]) -> str:

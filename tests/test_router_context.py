@@ -44,7 +44,12 @@ class FakeClient:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings()
+    """Profilo prudente: qui si prova la politica adattiva del router.
+
+    Quella incondizionata del profilo aggressivo e' un'altra politica, con
+    altre garanzie, e ha i suoi test in `test_profilo.py`.
+    """
+    return Settings(profilo="prudente")
 
 
 @pytest.fixture

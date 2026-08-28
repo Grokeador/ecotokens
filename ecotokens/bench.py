@@ -136,6 +136,11 @@ def _spegni_tutto(settings: Settings) -> None:
     settings.router.enabled = False
     settings.memory.enabled = False
     settings.budget.enabled = False
+    # Il profilo predefinito accende le leve che cambiano il contenuto delle
+    # risposte. La scala dell'ablazione deve pero' accenderle una alla volta e
+    # in ordine, altrimenti il guadagno del cambio di modello finirebbe
+    # attribuito allo stadio che capita di essere acceso per primo.
+    settings.applica_profilo_prudente()
 
 
 def make_settings(apply: Callable[[Settings], None] | None = None) -> Settings:
@@ -180,6 +185,24 @@ def _abilita_prompt(settings: Settings) -> None:
     settings.prompt.substitute = False
 
 
+def _abilita_effort_minimo(settings: Settings) -> None:
+    """Effort al minimo su tutto, senza giudicare la difficolta'."""
+    _abilita_prompt(settings)
+    settings.router.effort_policy = "sempre_basso"
+
+
+def _abilita_modello_economico(settings: Settings) -> None:
+    """L'ultima leva, e la piu' grossa: ogni sessione al modello meno caro.
+
+    Sta in fondo alla scala perche' e' quella che scambia di piu'. Il guadagno
+    e' misurato; cio' che si da' in cambio - la qualita' della risposta - non
+    lo e', e il banco non ha modo di diventarlo.
+    """
+    _abilita_effort_minimo(settings)
+    settings.router.model_downgrade = True
+    settings.router.downgrade_policy = "sempre"
+
+
 # Gradini cumulativi dell'ablazione: la differenza fra due gradini consecutivi
 # e' il contributo dello stadio appena acceso.
 ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
@@ -189,6 +212,8 @@ ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
     ("+ cache esatta", _abilita_cache_esatta),
     ("+ effort adattivo", _abilita_router),
     ("+ riscrittura prompt", _abilita_prompt),
+    ("+ effort sempre basso", _abilita_effort_minimo),
+    ("+ modello economico", _abilita_modello_economico),
 ]
 
 
@@ -273,7 +298,8 @@ async def run_benchmark(
     """Confronta "senza gateway" e "con gateway" su ogni scenario."""
     scenarios = scenarios or all_scenarios(project_root)
     if variant_apply is None:
-        variant_apply = _abilita_router  # la configurazione completa
+        # La configurazione completa, cioe' il profilo predefinito.
+        variant_apply = _abilita_modello_economico
 
     run = BenchRun(
         id=uuid.uuid4().hex[:12],

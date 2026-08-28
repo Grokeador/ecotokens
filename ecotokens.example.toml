@@ -5,6 +5,22 @@
 # Ogni campo si puo' anche sovrascrivere da ambiente, con la forma
 # ECOTOKENS_<SEZIONE>__<CAMPO>, per esempio ECOTOKENS_SERVER__PORT=9000
 
+# Quale compromesso fra spesa e fedelta' della risposta.
+#
+#   "prudente"   - nessuno stadio puo' cambiare il *contenuto* di una risposta.
+#                  Il modello resta quello chiesto dal client. Misurato: 75,2%.
+#   "aggressivo" - ogni sessione va al modello piu' economico, con l'effort al
+#                  minimo. Misurato: 95,3%.
+#
+# I venti punti di differenza non sono un'ottimizzazione piu' spinta: sono
+# un'altra risposta a un prezzo diverso. Il banco misura quanto e' lunga una
+# risposta, non se e' giusta, quindi quel guadagno e' interamente misurato e il
+# suo costo interamente no.
+#
+# Il profilo imposta dei DEFAULT: qualunque campo scritto qui sotto vince su di
+# esso. Chi mette `model_downgrade = false` in [router] ottiene quello.
+profilo = "aggressivo"
+
 [server]
 host = "127.0.0.1"
 port = 8000
@@ -158,6 +174,13 @@ enabled = true
 # modello, quindi senza invalidare la cache.
 effort_downshift = true
 simple_effort = "low"
+# Quando abbassare l'effort. "adattivo" giudica la difficolta' della domanda e
+# scende solo dove sembra sicuro; "sempre_basso" salta il giudizio. Un effort
+# chiesto esplicitamente dal client non si tocca in nessuna delle due.
+# Il profilo aggressivo mette "sempre_basso".
+# Lasciato commentato di proposito: scriverlo qui VINCE sul profilo. Se lo
+# togli dal commento stai scegliendo tu, e il profilo smette di governarlo.
+# effort_policy = "adattivo"
 # Cosa fare quando la domanda e' semplice ma il modello potrebbe dover scegliere
 # un tool. Misurato: togliere del tutto il veto varrebbe l'11,4% del costo, ma
 # il banco misura la lunghezza della risposta, non la sua qualita' - un effort
@@ -170,8 +193,20 @@ effort_with_tools = "medium"
 simple_max_question_tokens = 120
 # Livello rischioso: le cache sono legate al modello, quindi cambiarlo a meta'
 # conversazione azzera il prompt caching. Da attivare solo con cognizione.
-model_downgrade = false
+# Commentati perche' li governa il `profilo` in testa al file: l'aggressivo li
+# mette a true/"sempre", il prudente a false/"semplici". Toglierli dal commento
+# significa decidere a mano, e allora il profilo non li tocca piu'.
+# model_downgrade = false
+# Quando declassare. "semplici" applica il criterio stretto - niente tool in
+# gioco, domanda corta - e rende poco (75,2% -> 78,6%). "sempre" declassa ogni
+# sessione al primo turno e porta al 95,3%, ma non e' un'ottimizzazione piu'
+# spinta: e' un'altra risposta a un prezzo diverso.
+# downgrade_policy = "semplici"
+# Il modello si sceglie una volta per sessione e non cambia piu': cambiarlo a
+# meta' butterebbe via tutta la cache accumulata, che e' legata al modello.
 model_locked_per_session = true
+# Attenzione alla soglia di cache: Haiku 4.5 ne vuole 4096 token contro i 512
+# di Opus 5. Fra le due soglie la cache non si forma e l'API non lo segnala.
 downgrade_target = "claude-haiku-4-5"
 
 [budget]

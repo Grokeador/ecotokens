@@ -454,7 +454,7 @@ def optimize(
     live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
 ) -> None:
     """Prova piu' configurazioni e consiglia quella che ha speso meno."""
-    from .bench import open_results_store, run_sweep, save_run
+    from .bench import CORPUS_VERSION, open_results_store, run_sweep, save_run
 
     settings = load_settings(config)
     esiti, run = asyncio.run(run_sweep(live=live, project_root=Path.cwd()))
@@ -725,6 +725,120 @@ def cachewrites(
         "che altre richieste hanno seguito senza rileggerla. \"Di coda\" e' l'ultima "
         "scrittura di una sessione, che nessuno poteva sapere fosse l'ultima - e che "
         "un'altra sessione con lo stesso prefisso potrebbe ancora rileggere.[/]"
+    )
+
+
+@app.command()
+def ceiling(
+    goal: float = typer.Option(
+        99.0, "--goal", help="Risparmio da verificare, in percentuale"
+    ),
+    live: bool = typer.Option(False, "--live", help="Usa l'API vera invece del simulatore (spende)"),
+) -> None:
+    """Dice fin dove puo' arrivare il risparmio, e cosa lo ferma."""
+    if live:
+        esigi_credenziali()
+    from .ceiling import (
+        measure_ceiling,
+        measure_repetition_curve,
+        ripetizioni_per_obiettivo,
+    )
+
+    obiettivo = max(0.0, min(0.9999, goal / 100.0))
+    report = asyncio.run(measure_ceiling(live=live))
+
+    scala = Table(title="Fin dove si arriva, accendendo una leva alla volta")
+    scala.add_column("Leva")
+    scala.add_column("Costo", justify="right", no_wrap=True)
+    scala.add_column("Risparmio", justify="right", no_wrap=True)
+    scala.add_column("In cambio di")
+    for passo in report.steps:
+        quota = passo.saved_ratio(report.baseline_usd)
+        scala.add_row(
+            passo.etichetta,
+            f"${passo.cost_usd:.4f}",
+            f"[green]{quota * 100:.1f}%[/]" if passo.sicura else f"{quota * 100:.1f}%",
+            "[dim]niente che non sia gia' misurato[/]" if passo.sicura else passo.in_cambio,
+        )
+    console.print(scala)
+    console.print()
+
+    pavimento = report.floor
+    if pavimento is None:
+        return
+
+    tetto = Table(title="Il pavimento: cio' che nessuna configurazione toglie")
+    tetto.add_column("Voce")
+    tetto.add_column("Costo", justify="right", no_wrap=True)
+    tetto.add_column("Perche' resta")
+    tetto.add_row(
+        "Output generato",
+        f"${pavimento.output_usd:.4f}",
+        "nessuna cache lo sconta: non esisteva prima della richiesta",
+    )
+    tetto.add_row(
+        "Input mai visto",
+        f"${pavimento.input_nuovo_usd:.4f}",
+        "contenuto nuovo, va trasmesso almeno una volta",
+    )
+    tetto.add_row(
+        "Riletture da cache",
+        f"${pavimento.riletture_usd:.4f}",
+        "gia' scontate a 0,1x, ma non gratuite",
+    )
+    tetto.add_row("[bold]Totale[/]", f"[bold]${pavimento.totale_usd:.4f}[/]", "")
+    console.print(tetto)
+    console.print()
+
+    massimo = report.tetto_teorico()
+    tetto_spesa = report.baseline_usd * (1.0 - obiettivo)
+    if report.raggiungibile(obiettivo):
+        console.print(
+            f"[green]Il {goal:.1f}% e' compatibile con il pavimento[/] "
+            f"(servono <= ${tetto_spesa:.4f}, il pavimento e' ${pavimento.totale_usd:.4f})."
+        )
+    else:
+        console.print(
+            f"[yellow]Il {goal:.1f}% non e' raggiungibile su questo corpus.[/] "
+            f"Servirebbero <= ${tetto_spesa:.4f}, ma il pavimento e' "
+            f"${pavimento.totale_usd:.4f}: {pavimento.totale_usd / tetto_spesa:.1f} volte tanto."
+        )
+    console.print(f"Massimo teorico: [bold]{massimo * 100:.1f}%[/]")
+    console.print()
+
+    punti = asyncio.run(measure_repetition_curve(live=live))
+    curva = Table(title="Il risparmio dipende dal traffico, non dal gateway")
+    curva.add_column("Carico")
+    curva.add_column("Richieste", justify="right", no_wrap=True)
+    curva.add_column("Senza", justify="right", no_wrap=True)
+    curva.add_column("Con", justify="right", no_wrap=True)
+    curva.add_column("Risparmio", justify="right", no_wrap=True)
+    for punto in punti:
+        raggiunto = punto.saved_ratio >= obiettivo
+        quota = f"{punto.saved_ratio * 100:.1f}%"
+        curva.add_row(
+            f"{punto.uniche} domande x{punto.ripetizioni}",
+            str(punto.richieste),
+            f"${punto.baseline_usd:.4f}",
+            f"${punto.cost_usd:.4f}",
+            f"[green]{quota}[/]" if raggiunto else quota,
+        )
+    console.print(curva)
+    console.print()
+
+    necessarie = ripetizioni_per_obiettivo(punti, obiettivo)
+    if necessarie:
+        console.print(
+            f"[dim]Su richieste tutte uguali il {goal:.1f}% arriva a circa "
+            f"{necessarie} ripetizioni: la cache esatta non sconta il prezzo di un "
+            f"token, lo azzera. La prima richiesta pero' si paga sempre, quindi la "
+            f"curva sale verso il 100% senza toccarlo.[/]"
+        )
+    console.print(
+        "[dim]Il numero di testa della dashboard e' quello del corpus standard, che "
+        "mescola carichi ripetitivi e carichi tutti diversi. Alzarlo aggiungendo "
+        "ripetizioni al corpus si puo' fare in dieci minuti, e non misurerebbe piu' "
+        "niente.[/]"
     )
 
 

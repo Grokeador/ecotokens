@@ -63,10 +63,11 @@ class RouterStage(BaseStage):
         # Un effort chiesto esplicitamente dal client non si tocca.
         if ctx.client_effort is not None:
             return
-        if not self._question_looks_simple(ctx):
+        sempre = self.config.effort_policy == "sempre_basso"
+        if not sempre and not self._question_looks_simple(ctx):
             return
 
-        if self._tools_in_play(ctx):
+        if not sempre and self._tools_in_play(ctx):
             target = self.config.effort_with_tools
             if target == "off":
                 ctx.note("effort invariato: la richiesta puo' chiamare un tool")
@@ -74,7 +75,11 @@ class RouterStage(BaseStage):
             motivo = "domanda semplice ma con tool disponibili: si scende a meta' strada"
         else:
             target = self.config.simple_effort
-            motivo = "richiesta semplice, la cache resta valida"
+            motivo = (
+                "effort_policy = sempre_basso"
+                if sempre
+                else "richiesta semplice, la cache resta valida"
+            )
 
         output_config = ctx.params.setdefault("output_config", {})
         previous = output_config.get("effort")
@@ -151,7 +156,7 @@ class RouterStage(BaseStage):
         target = resolve_model(self.config.downgrade_target)
         if target == ctx.model:
             return
-        if not self._looks_simple(ctx):
+        if self.config.downgrade_policy != "sempre" and not self._looks_simple(ctx):
             return
 
         current = model_info(ctx.model)
@@ -159,7 +164,12 @@ class RouterStage(BaseStage):
         if candidate.input_per_mtok >= current.input_per_mtok:
             return
 
-        self._apply_model(ctx, target, "richiesta semplice all'inizio della sessione")
+        motivo = (
+            "declassamento incondizionato (downgrade_policy = sempre)"
+            if self.config.downgrade_policy == "sempre"
+            else "richiesta semplice all'inizio della sessione"
+        )
+        self._apply_model(ctx, target, motivo)
 
     def _apply_model(self, ctx: RequestContext, target: str, reason: str) -> None:
         previous = ctx.model
