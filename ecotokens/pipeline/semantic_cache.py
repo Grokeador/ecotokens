@@ -32,28 +32,53 @@ logger = logging.getLogger("ecotokens.semantic")
 class SemanticCacheStage(BaseStage):
     name = "semantic_cache"
 
-    def __init__(self, settings: Any) -> None:
+    def __init__(self, settings: Any, embedder: Any = None) -> None:
+        """``embedder`` sostituisce il modello di default.
+
+        Serve a due cose. La prima e' rendere provabile questo stadio: il
+        modello vero si scarica dalla rete, e un test che tocca la rete non e'
+        un test. La seconda e' che chi ha gia' un servizio di embedding non
+        deve installarne un secondo per usare questa cache; basta che
+        l'oggetto abbia un metodo ``embed(testi) -> iterabile di vettori``.
+        """
         self.config = settings.semantic_cache
         self.enabled = self.config.enabled
-        self._embedder: Any = None
+        self._embedder: Any = embedder
         self._numpy: Any = None
         if self.enabled:
             self._load_backend()
 
     def _load_backend(self) -> None:
+        # I due backend hanno ruoli distinti e vanno caricati separatamente:
+        # numpy fa il coseno, fastembed produce i vettori. Caricandoli insieme,
+        # l'assenza del secondo spegneva anche cio' che il primo sa fare da
+        # solo - ed e' il motivo per cui questo stadio e' rimasto a lungo il
+        # meno provato del progetto.
         try:
             import numpy
+        except ImportError:
+            self.enabled = False
+            logger.warning(
+                "cache semantica richiesta ma numpy non e' installato: stadio "
+                "disattivato. Installare con: pip install ecotokens[semantic]"
+            )
+            return
+        self._numpy = numpy
+
+        if self._embedder is not None:
+            return
+
+        try:
             from fastembed import TextEmbedding
         except ImportError:
             self.enabled = False
             logger.warning(
-                "cache semantica richiesta ma fastembed/numpy non sono installati: "
-                "stadio disattivato. Installare con: pip install ecotokens[semantic]"
+                "cache semantica richiesta ma fastembed non e' installato: stadio "
+                "disattivato. Installare con: pip install ecotokens[semantic]"
             )
             return
         try:
             self._embedder = TextEmbedding(model_name=self.config.model_name)
-            self._numpy = numpy
         except Exception as error:
             self.enabled = False
             logger.warning("modello di embedding non caricabile (%s): stadio disattivato", error)

@@ -38,7 +38,7 @@ from .pipeline.base import SOURCE_API
 from .simulator import create_stub
 from .store.db import Database
 from .store.repos import Store
-from .workloads import Scenario, all_scenarios
+from .workloads import Scenario, all_scenarios, corpus_fingerprint
 
 
 @dataclass
@@ -95,6 +95,9 @@ class BenchRun:
     label: str
     mode: str
     created_at: float
+    # Impronta del contenuto del corpus. Due misure con impronte diverse non
+    # sono confrontabili, anche quando l'elenco degli scenari coincide.
+    fingerprint: str = ""
     measurements: list[Measurement] = field(default_factory=list)
     comparisons: list[Comparison] = field(default_factory=list)
 
@@ -141,6 +144,7 @@ def _spegni_tutto(settings: Settings) -> None:
     # in ordine, altrimenti il guadagno del cambio di modello finirebbe
     # attribuito allo stadio che capita di essere acceso per primo.
     settings.applica_profilo_prudente()
+    settings.cache_planner.mode = "manuale"
 
 
 def make_settings(apply: Callable[[Settings], None] | None = None) -> Settings:
@@ -155,8 +159,22 @@ def make_settings(apply: Callable[[Settings], None] | None = None) -> Settings:
     return settings
 
 
+def _abilita_cache_automatica(settings: Settings) -> None:
+    """Cio' che si ottiene oggi senza il gateway: un campo in cima e basta.
+
+    E' il riferimento onesto per il pianificatore. Finche' Anthropic non
+    offriva il caching automatico, "senza gateway" voleva dire "nessuna cache"
+    e il confronto era leale. Adesso quel gradino e' gratis per chiunque, e
+    attribuirlo al gateway sarebbe misurare quanto costava non usare una
+    funzione predefinita.
+    """
+    settings.cache_planner.enabled = True
+    settings.cache_planner.mode = "automatico"
+
+
 def _abilita_cache_planner(settings: Settings) -> None:
     settings.cache_planner.enabled = True
+    settings.cache_planner.mode = "manuale"
 
 
 def _abilita_contesto(settings: Settings) -> None:
@@ -207,7 +225,9 @@ def _abilita_modello_economico(settings: Settings) -> None:
 # e' il contributo dello stadio appena acceso.
 ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
     (BASELINE_VARIANT, None),
-    ("+ prompt caching", _abilita_cache_planner),
+    # Il gradino che il resto della scala deve scavalcare per contare qualcosa.
+    ("+ caching automatico", _abilita_cache_automatica),
+    ("+ pianificatore EcoTokens", _abilita_cache_planner),
     ("+ potatura contesto", _abilita_contesto),
     ("+ cache esatta", _abilita_cache_esatta),
     ("+ effort adattivo", _abilita_router),
@@ -306,6 +326,7 @@ async def run_benchmark(
         label=label,
         mode="live" if live else "simulato",
         created_at=time.time(),
+        fingerprint=corpus_fingerprint(scenarios),
     )
 
     for scenario in scenarios:
@@ -335,6 +356,7 @@ async def run_ablation(
         label=label,
         mode="live" if live else "simulato",
         created_at=time.time(),
+        fingerprint=corpus_fingerprint(scenarios),
     )
 
     for nome, applica in ABLATION_STEPS:
@@ -384,9 +406,9 @@ def stage_contributions(run: BenchRun) -> list[dict[str, Any]]:
 async def save_run(store: Store, run: BenchRun, *, corpus: str = "", notes: str = "") -> None:
     """Registra la misura, cosi' il miglioramento resta visibile nel tempo."""
     await store.db.execute(
-        """INSERT INTO bench_runs (id, created_at, label, mode, corpus, notes)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (run.id, run.created_at, run.label, run.mode, corpus, notes),
+        """INSERT INTO bench_runs (id, created_at, label, mode, corpus, fingerprint, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (run.id, run.created_at, run.label, run.mode, corpus, run.fingerprint, notes),
     )
     await store.db.executemany(
         """INSERT INTO bench_results
@@ -514,6 +536,7 @@ async def run_sweep(
         label="ricerca configurazione",
         mode="live" if live else "simulato",
         created_at=time.time(),
+        fingerprint=corpus_fingerprint(scenarios),
     )
 
     for scenario in scenarios:
@@ -961,11 +984,27 @@ async def stage_progress(
             "available": False,
             "corpus": etichetta,
             "runs_found": len(ablazioni),
+            "comparable": False,
+            "fingerprint": "",
+            "previous_fingerprint": "",
             "stages": [],
         }
 
     # `load_runs` restituisce dalla piu' recente: la prima e' quella appena
     # registrata, la seconda e' il termine di paragone.
+    #
+    # Se le due hanno impronte diverse il corpus e' cambiato *contenuto* fra
+    # l'una e l'altra, anche se l'elenco degli scenari e' lo stesso: lo
+    # scenario `costruzione` legge i sorgenti veri del progetto, quindi ogni
+    # commit che allunga il codice sposta il riferimento. Il confronto viene
+    # comunque mostrato - nasconderlo sarebbe peggio - ma marcato, perche' una
+    # parte del delta e' crescita del metro e non merito del gateway.
+    impronta_ora = ablazioni[0].get("fingerprint") or ""
+    impronta_prima = ablazioni[1].get("fingerprint") or ""
+    # Le misure registrate prima che l'impronta esistesse hanno la stringa
+    # vuota: di quelle non si sa, e "non si sa" non e' "sono uguali".
+    confrontabile = bool(impronta_ora) and impronta_ora == impronta_prima
+
     precedente = {
         voce["stage"]: voce
         for voce in stage_contributions_from_results(ablazioni[1]["results"])
@@ -1008,6 +1047,9 @@ async def stage_progress(
         "runs_found": len(ablazioni),
         "previous_at": ablazioni[1]["created_at"],
         "previous_label": ablazioni[1].get("label") or "",
+        "comparable": confrontabile,
+        "fingerprint": impronta_ora,
+        "previous_fingerprint": impronta_prima,
         "stages": righe,
     }
 

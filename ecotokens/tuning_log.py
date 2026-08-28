@@ -536,4 +536,94 @@ TUNING_LOG: list[TuningEntry] = [
         ),
     ),
 
+    TuningEntry(
+        area="misura",
+        title="Il 68% del prompt caching non era del gateway: era del non avere la cache",
+        finding=(
+            "Anthropic ha reso disponibile il caching automatico: un solo `cache_control` in "
+            "cima alla richiesta, il breakpoint sull'ultimo blocco memorizzabile, che avanza "
+            "da solo a ogni turno. Da quel momento \"senza gateway\" ha smesso di voler dire "
+            "\"nessuna cache\", ma il banco continuava a confrontarsi con il nulla. "
+            "Aggiunto quel gradino all'ablazione, il caching automatico vale da solo il "
+            "67,8% e il pianificatore di EcoTokens ne aggiunge **0,7**. Per un anno lo "
+            "stadio e' stato documentato come 'la leva di risparmio piu' forte del gateway': "
+            "era la leva piu' forte del *prompt caching*, che non e' la stessa cosa, e da "
+            "quando basta una riga per averla non e' piu' merito di nessuno."
+        ),
+        effect=(
+            "Il riferimento non e' cambiato - resta utile sapere quanto costa non usare la "
+            "cache affatto - ma la scala ha un gradino in piu' fra quello e il "
+            "pianificatore, e ogni percentuale del gateway va ora letta a partire dal 67,8%. "
+            "Il pianificatore ha guadagnato anche una modalita' `automatico` che delega al "
+            "server: se il carico non e' quello giusto, e' la scelta migliore e costa zero "
+            "manutenzione."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Il pianificatore serve a una cosa sola, e non e' quella che sembrava",
+        finding=(
+            "Lo 0,7% aggregato nasconde due comportamenti opposti. Su ogni conversazione "
+            "singola che cresce - chat, ciclo agentico, costruzione - il pianificatore di "
+            "EcoTokens costa lo 0,1-0,2% **in piu'** del caching automatico: piazza due "
+            "breakpoint dove ne basta uno, e la seconda scrittura si paga 1,25x senza "
+            "aggiungere niente. Su richieste diverse che condividono il prompt di sistema "
+            "invece rende il 19,9%, e la ragione e' strutturale: il caching automatico mette "
+            "il breakpoint sull'ultimo blocco, cioe' **dopo** la domanda, quindi la voce "
+            "creata non serve a nessun'altra domanda; il breakpoint su system+tools crea "
+            "invece una voce che tutte le richieste successive rileggono."
+        ),
+        effect=(
+            "Il pianificatore manuale conviene quando piu' richieste condividono un prefisso "
+            "e differiscono in coda - assistenti con un system prompt grande, "
+            "classificazioni, estrazioni - e non conviene su una conversazione sola che "
+            "cresce, dove il server fa lo stesso lavoro meglio. E' documentato cosi' invece "
+            "che come 'la leva piu' forte', e `cache_planner.mode` permette di scegliere. "
+            "Che il numero aggregato fosse la media di un -0,2% e di un +19,9% e' il motivo "
+            "per cui una media, da sola, non e' mai una misura."
+        ),
+    ),
+
+    TuningEntry(
+        area="gateway",
+        title="La cache semantica caricava insieme due backend con ruoli diversi",
+        finding=(
+            "`_load_backend` importava numpy e fastembed nello stesso try: mancando il "
+            "secondo si spegneva anche cio' che il primo sa fare da solo. Il modello di "
+            "fastembed si scarica dalla rete, e i test di questo progetto non devono "
+            "toccare la rete, quindi lo stadio era di fatto non provabile: 112 istruzioni "
+            "al 22% di copertura. E' la combinazione peggiore possibile - spedito, "
+            "rischioso e non verificato - proprio sull'unico stadio che possa restituire "
+            "una risposta **sbagliata**."
+        ),
+        effect=(
+            "I due caricamenti sono separati e lo stadio accetta un embedder qualunque, "
+            "purche' abbia `embed(testi)`. La copertura passa dal 22% all'80% con un "
+            "embedder deterministico scritto a mano, che permette di provare la soglia di "
+            "similarita' al bordo invece che per tentativi. La cucitura serve anche in "
+            "produzione: chi ha gia' un servizio di embedding non deve installarne un "
+            "secondo."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="La copertura media diceva 73% e nascondeva dov'erano i buchi",
+        finding=(
+            "Misurata per la prima volta, la copertura complessiva era del 73% - un numero "
+            "che non allarma. Distribuita, diceva un'altra cosa: `api/errors.py` al 29%, "
+            "cioe' il codice che gira **solo quando le cose vanno male**; `stream.py` al "
+            "64%, con l'intero percorso 'risposta dalla cache servita in streaming' mai "
+            "esercitato - il caso felice della funzione che risparmia di piu'; "
+            "`budget.py` al 62%, cioe' la rete di sicurezza. I test seguivano il percorso "
+            "felice, che e' il percorso che meno ha bisogno di test."
+        ),
+        effect=(
+            "Trentacinque test nuovi mirati su quei tre moduli: errori al 100%, budget al "
+            "100%, streaming all'84%. Nessuno di essi era difficile da scrivere, il che e' "
+            "il vero contenuto della voce - non erano mancati per difficolta' ma per "
+            "ordine di scrittura. Il totale sale dal 73% al 76%, e quel +3 vale piu' di "
+            "quanto sembri: e' tutto concentrato dove il fallimento e' silenzioso."
+        ),
+    ),
+
 ]

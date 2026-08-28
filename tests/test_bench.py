@@ -143,7 +143,11 @@ async def test_l_ablazione_attribuisce_il_risparmio():
     contributi = stage_contributions(run)
 
     assert [c["stage"] for c in contributi] == [
-        "prompt caching",
+        # Il primo gradino non e' del gateway: e' il caching automatico che
+        # Anthropic offre con un campo. Sta nella scala proprio per questo -
+        # senza, i 68 punti che regala sembrerebbero merito del pianificatore.
+        "caching automatico",
+        "pianificatore EcoTokens",
         "potatura contesto",
         "cache esatta",
         "effort adattivo",
@@ -161,10 +165,45 @@ async def test_l_ablazione_attribuisce_il_risparmio():
     assert contributi[-1]["cumulative_usd"] == pytest.approx(riferimento - completo)
 
 
-async def test_il_prompt_caching_e_lo_stadio_dominante():
+async def test_il_caching_automatico_domina_e_non_e_del_gateway():
+    """La correzione piu' grossa mai fatta a questo progetto, fissata da un test.
+
+    Per un anno lo stadio dominante era 'prompt caching' e veniva contato come
+    merito del gateway. Da quando Anthropic offre il caching automatico - un
+    solo campo in cima alla richiesta - quel gradino lo ottiene chiunque senza
+    gateway, e il pianificatore di EcoTokens vale cio' che aggiunge *sopra*.
+
+    Il test fissa entrambe le meta' della frase: che il primo gradino domini, e
+    che il secondo sia molto piu' piccolo. Se un giorno si invertissero sarebbe
+    una notizia, e va scoperta da qui.
+    """
     run = await run_ablation(scenarios=[scenario_chat(turns=5)], label="test")
     contributi = {c["stage"]: c["saved_usd"] for c in stage_contributions(run)}
-    assert contributi["prompt caching"] == max(contributi.values())
+
+    assert contributi["caching automatico"] == max(contributi.values())
+    assert contributi["pianificatore EcoTokens"] < contributi["caching automatico"] / 10
+
+
+async def test_il_pianificatore_manuale_rende_a_prefisso_condiviso():
+    """Dove il pianificatore serve davvero, e perche'.
+
+    Il caching automatico piazza il breakpoint sull'ultimo blocco, cioe' dopo
+    la domanda: la voce che crea non e' riutilizzabile da una domanda diversa.
+    Un breakpoint su system+tools ne crea una che tutte le richieste
+    successive rileggono. Su un carico di domande distinte che condividono il
+    prompt di sistema la differenza e' strutturale, non marginale.
+    """
+    from ecotokens.bench import _abilita_cache_automatica, _abilita_cache_planner
+    from ecotokens.workloads import scenario_ripetitivo
+
+    scenario = scenario_ripetitivo(uniche=4, ripetizioni=2)
+    automatico = await _run_scenario(
+        scenario, make_settings(_abilita_cache_automatica), "auto", live=False
+    )
+    manuale = await _run_scenario(
+        scenario, make_settings(_abilita_cache_planner), "manuale", live=False
+    )
+    assert manuale.cost_usd < automatico.cost_usd
 
 
 # --- persistenza e dashboard ----------------------------------------------
@@ -275,7 +314,8 @@ def test_i_contributi_si_ricostruiscono_da_una_misura_registrata():
     """Una misura vecchia deve restare interrogabile anche dopo."""
     righe = [
         {"variant": BASELINE_VARIANT, "cost_usd": 10.0},
-        {"variant": "+ prompt caching", "cost_usd": 4.0},
+        {"variant": "+ caching automatico", "cost_usd": 5.0},
+        {"variant": "+ pianificatore EcoTokens", "cost_usd": 4.0},
         {"variant": "+ potatura contesto", "cost_usd": 4.0},
         {"variant": "+ cache esatta", "cost_usd": 3.0},
         {"variant": "+ effort adattivo", "cost_usd": 2.5},
@@ -284,7 +324,10 @@ def test_i_contributi_si_ricostruiscono_da_una_misura_registrata():
     contributi = stage_contributions_from_results(righe)
     per_nome = {c["stage"]: c for c in contributi}
 
-    assert per_nome["prompt caching"]["saved_ratio"] == pytest.approx(0.6)
+    assert per_nome["caching automatico"]["saved_ratio"] == pytest.approx(0.5)
+    # Il pianificatore vale cio' che aggiunge SOPRA il caching automatico, non
+    # il totale: e' il punto di tutto il gradino nuovo.
+    assert per_nome["pianificatore EcoTokens"]["saved_ratio"] == pytest.approx(0.1)
     assert per_nome["potatura contesto"]["saved_ratio"] == pytest.approx(0.0)
     assert per_nome["riscrittura prompt"]["cumulative_ratio"] == pytest.approx(0.76)
 
@@ -293,11 +336,15 @@ def test_una_misura_di_una_versione_piu_vecchia_si_ferma_al_gradino_mancante():
     """Non si inventa uno zero: i gradini sono cumulativi e sarebbero falsati."""
     righe = [
         {"variant": BASELINE_VARIANT, "cost_usd": 10.0},
-        {"variant": "+ prompt caching", "cost_usd": 4.0},
+        {"variant": "+ caching automatico", "cost_usd": 5.0},
+        {"variant": "+ pianificatore EcoTokens", "cost_usd": 4.0},
         # gradini successivi assenti: misura di prima che esistessero
     ]
     contributi = stage_contributions_from_results(righe)
-    assert [c["stage"] for c in contributi] == ["prompt caching"]
+    assert [c["stage"] for c in contributi] == [
+        "caching automatico",
+        "pianificatore EcoTokens",
+    ]
 
 
 async def test_il_confronto_fra_versioni_riconosce_i_miglioramenti():
@@ -306,7 +353,8 @@ async def test_il_confronto_fra_versioni_riconosce_i_miglioramenti():
         vecchia = BenchRun(id="v1", label="prima", mode="simulato", created_at=1.0)
         vecchia.measurements = [
             Measurement(scenario="x", variant=BASELINE_VARIANT, cost_usd=10.0),
-            Measurement(scenario="x", variant="+ prompt caching", cost_usd=5.0),
+            Measurement(scenario="x", variant="+ caching automatico", cost_usd=6.0),
+            Measurement(scenario="x", variant="+ pianificatore EcoTokens", cost_usd=5.0),
             Measurement(scenario="x", variant="+ potatura contesto", cost_usd=5.0),
             Measurement(scenario="x", variant="+ cache esatta", cost_usd=4.5),
             Measurement(scenario="x", variant="+ effort adattivo", cost_usd=4.5),
@@ -317,7 +365,8 @@ async def test_il_confronto_fra_versioni_riconosce_i_miglioramenti():
         nuova = BenchRun(id="v2", label="dopo", mode="simulato", created_at=2.0)
         nuova.measurements = [
             Measurement(scenario="x", variant=BASELINE_VARIANT, cost_usd=10.0),
-            Measurement(scenario="x", variant="+ prompt caching", cost_usd=4.0),
+            Measurement(scenario="x", variant="+ caching automatico", cost_usd=6.0),
+            Measurement(scenario="x", variant="+ pianificatore EcoTokens", cost_usd=4.0),
             Measurement(scenario="x", variant="+ potatura contesto", cost_usd=4.5),
             Measurement(scenario="x", variant="+ cache esatta", cost_usd=4.0),
             Measurement(scenario="x", variant="+ effort adattivo", cost_usd=4.0),
@@ -330,7 +379,7 @@ async def test_il_confronto_fra_versioni_riconosce_i_miglioramenti():
 
         assert progresso["available"]
         stati = {voce["stage"]: voce["status"] for voce in progresso["stages"]}
-        assert stati["prompt caching"] == "migliorato"
+        assert stati["pianificatore EcoTokens"] == "migliorato"
         assert stati["potatura contesto"] == "peggiorato"
         assert stati["cache esatta"] == "invariato"
     finally:
@@ -398,3 +447,97 @@ def test_con_credenziali_la_misura_live_procede(monkeypatch):
 
     monkeypatch.setitem(__import__("sys").modules, "anthropic", FintoModulo)
     cli.esigi_credenziali()  # non deve sollevare nulla
+
+
+# --- impronta del corpus ---------------------------------------------------
+
+
+def test_l_impronta_cambia_se_cambia_il_contenuto_non_solo_l_elenco():
+    """La domanda a cui `CORPUS_VERSION` non sa rispondere.
+
+    Due corpus possono avere gli stessi scenari e dire cose diverse: lo
+    scenario `costruzione` legge i sorgenti veri del progetto, quindi cresce
+    con il codice. Senza impronta, la sezione dei progressi confronterebbe
+    misure incomparabili senza accorgersene.
+    """
+    from ecotokens.workloads import Scenario, corpus_fingerprint
+
+    def corpus(testo: str) -> list[Scenario]:
+        return [
+            Scenario(
+                name="x",
+                description="",
+                requests=[{"model": "m", "messages": [{"role": "user", "content": testo}]}],
+            )
+        ]
+
+    assert corpus_fingerprint(corpus("a")) == corpus_fingerprint(corpus("a"))
+    assert corpus_fingerprint(corpus("a")) != corpus_fingerprint(corpus("b"))
+
+
+def test_l_impronta_non_dipende_dall_ordine_delle_chiavi():
+    """L'ordine delle chiavi di un dizionario non e' parte del carico.
+
+    Senza `sort_keys` l'impronta cambierebbe da sola fra due esecuzioni che
+    hanno misurato la stessa identica cosa, e ogni confronto risulterebbe
+    contaminato: un avviso che scatta sempre non e' un avviso.
+    """
+    from ecotokens.workloads import Scenario, corpus_fingerprint
+
+    uno = [Scenario(name="x", description="", requests=[{"model": "m", "stream": False}])]
+    due = [Scenario(name="x", description="", requests=[{"stream": False, "model": "m"}])]
+    assert corpus_fingerprint(uno) == corpus_fingerprint(due)
+
+
+async def test_l_ablazione_registra_l_impronta_del_corpus():
+    from ecotokens.bench import run_ablation
+    from ecotokens.workloads import all_scenarios, corpus_fingerprint
+
+    scenari = [scenario_chat(turns=2)]
+    run = await run_ablation(scenarios=scenari, label="test")
+    assert run.fingerprint == corpus_fingerprint(scenari)
+    assert run.fingerprint != corpus_fingerprint(all_scenarios())
+
+
+async def test_i_progressi_segnalano_un_confronto_fra_corpus_diversi():
+    """L'impronta serve a questo, e solo a questo: rendere visibile la deriva.
+
+    Il confronto non viene soppresso - nasconderlo sarebbe peggio - ma marcato,
+    perche' parte del delta e' crescita del metro e non merito del gateway.
+    """
+    from ecotokens.bench import (
+        open_results_store,
+        run_ablation,
+        save_run,
+        stage_contributions,
+        stage_progress,
+    )
+
+    database, store = open_results_store(":memory:")
+    try:
+        etichetta = "prova"
+        prima = await run_ablation(scenarios=[scenario_chat(turns=2)], label="prima")
+        await save_run(store, prima, corpus=etichetta)
+
+        # Stessa forma, contenuto diverso: e' esattamente cio' che succede
+        # quando `costruzione` rilegge sorgenti cresciuti.
+        dopo = await run_ablation(scenarios=[scenario_chat(turns=3)], label="dopo")
+        assert dopo.fingerprint != prima.fingerprint
+        await save_run(store, dopo, corpus=etichetta)
+
+        progresso = await stage_progress(
+            store, stage_contributions(dopo), corpus=etichetta
+        )
+        assert progresso["available"] is True
+        assert progresso["comparable"] is False
+        assert progresso["stages"], "il confronto va mostrato, non soppresso"
+
+        # E due misure sullo stesso identico carico devono risultare confrontabili.
+        terza = await run_ablation(scenarios=[scenario_chat(turns=3)], label="terza")
+        await save_run(store, terza, corpus=etichetta)
+        progresso = await stage_progress(
+            store, stage_contributions(terza), corpus=etichetta
+        )
+        assert progresso["comparable"] is True
+    finally:
+        database.close()

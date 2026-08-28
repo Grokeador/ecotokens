@@ -219,3 +219,62 @@ async def test_ttl_lungo_solo_per_sessioni_lunghe_e_intermittenti(planner, setti
     await planner.before(ctx)
     assert ctx.cache_ttl == "1h"
     assert ctx.params["system"][-1]["cache_control"]["ttl"] == "1h"
+
+
+# --- modalita' automatica --------------------------------------------------
+
+
+async def test_la_modalita_automatica_delega_al_server():
+    """Un solo campo in cima, nessun marker sui blocchi."""
+    from ecotokens.config import Settings
+
+    settings = Settings(profilo="prudente")
+    settings.cache_planner.mode = "automatico"
+    ctx = _contesto(settings)
+    await CachePlannerStage(settings).before(ctx)
+
+    assert ctx.params.get("cache_control") == {"type": "ephemeral"}
+    marcati = [b for b in (ctx.params.get("system") or []) if "cache_control" in b]
+    assert not marcati, "in automatico i blocchi non vanno marcati"
+
+
+async def test_la_modalita_manuale_marca_i_blocchi_e_non_mette_il_campo_in_cima():
+    from ecotokens.config import Settings
+
+    settings = Settings(profilo="prudente")
+    settings.cache_planner.mode = "manuale"
+    ctx = _contesto(settings)
+    await CachePlannerStage(settings).before(ctx)
+
+    assert "cache_control" not in ctx.params
+    marcati = [b for b in (ctx.params.get("system") or []) if "cache_control" in b]
+    assert marcati, "in manuale il breakpoint su system+tools deve esserci"
+
+
+def _contesto(settings):
+    """Richiesta con un system prompt sopra la soglia minima di Opus 5."""
+    from ecotokens.api.schemas import ChatCompletionRequest
+    from ecotokens.pipeline.base import RequestContext
+    from ecotokens.translate.to_anthropic import build_anthropic_params
+
+    request = ChatCompletionRequest.model_validate(
+        {
+            "model": "claude-opus-5",
+            "messages": [
+                {"role": "system", "content": "istruzioni dettagliate " * 400},
+                {"role": "user", "content": "ciao"},
+            ],
+        }
+    )
+    traduzione = build_anthropic_params(request, settings)
+    return RequestContext(
+        request=request,
+        settings=settings,
+        store=None,
+        client=None,
+        counter=None,
+        completion_id="test",
+        model=traduzione.model,
+        params=traduzione.params,
+        stream=False,
+    )

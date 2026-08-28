@@ -28,6 +28,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .pricing import model_info
+
 
 class StubState:
     """Memoria dello stub: richieste ricevute e prefissi in cache."""
@@ -235,6 +237,19 @@ def _render(payload: dict[str, Any]) -> tuple[list[str], list[int]]:
                 isinstance(block, dict) and bool(block.get("cache_control")),
             )
 
+    # Caching automatico: un solo `cache_control` in cima alla richiesta, senza
+    # marker sui blocchi. Il server piazza il breakpoint sull'ultimo blocco
+    # memorizzabile, e a ogni turno quello si sposta in avanti da solo.
+    #
+    # E' la funzione che ha cambiato la domanda a cui questo banco risponde.
+    # Finche' non esisteva, "senza gateway" voleva dire "nessuna cache" e il
+    # confronto era onesto. Adesso chiunque ottiene un breakpoint con una riga,
+    # quindi il riferimento giusto per il pianificatore di EcoTokens non e' piu'
+    # il nulla: e' questo.
+    if payload.get("cache_control") and items:
+        if len(items) not in markers:
+            markers.append(len(items))
+
     return items, markers
 
 
@@ -304,6 +319,34 @@ def _output_tokens(state: StubState, payload: dict[str, Any]) -> int:
     return generati
 
 
+def _sopra_la_soglia(payload: dict[str, Any], items: list[str], markers: list[int]) -> list[int]:
+    """Scarta i breakpoint su prefissi troppo corti per essere memorizzati.
+
+    Sotto il minimo del modello la cache non si crea e **l'API non lo segnala**:
+    ``cache_creation_input_tokens`` torna zero e la richiesta va a buon fine.
+    E' la perdita che si nota solo mesi dopo, sulla fattura.
+
+    Il simulatore lo ignorava, e finora non era grave: il pianificatore del
+    gateway controlla la soglia prima di piazzare un marker, quindi non gliene
+    passava mai uno sotto misura. Diventa invece decisivo appena si misura una
+    configurazione in cui il pianificatore e' spento - il caching automatico -
+    perche' li' il marker lo mette il server e il controllo tocca a lui.
+
+    Il minimo non e' monotono col prezzo: Opus 5 ne vuole 512, Sonnet 5 mille,
+    Haiku 4.5 quattromila. Passare a un modello piu' economico puo' quindi
+    spegnere la cache in silenzio.
+    """
+    if not markers:
+        return markers
+    minimo = model_info(payload.get("model") or "").cache_min_tokens
+    lunghezze = [len(voce) for voce in items]
+    sopravvissuti = []
+    for marker in markers:
+        token = max(1, sum(lunghezze[:marker]) // 4)
+        if token >= minimo:
+            sopravvissuti.append(marker)
+    return sopravvissuti
+
 def _usage_for(state: StubState, payload: dict[str, Any]) -> dict[str, int]:
     # Il server applica gli edit e poi conta: contare prima significherebbe
     # fatturare contenuto che non e' mai arrivato al modello.
@@ -311,6 +354,7 @@ def _usage_for(state: StubState, payload: dict[str, Any]) -> dict[str, int]:
     total = max(1, len(json.dumps(effettivo, default=str)) // 4)
     output = _output_tokens(state, effettivo)
     items, markers = _render(effettivo)
+    markers = _sopra_la_soglia(effettivo, items, markers)
 
     if not markers:
         return {

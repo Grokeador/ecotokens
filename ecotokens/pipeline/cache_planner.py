@@ -58,6 +58,15 @@ class CachePlannerStage(BaseStage):
         if ctx.cache_ttl == "1h":
             marker["ttl"] = "1h"
 
+        # Delega al server: un solo campo in cima, nessun marker sui blocchi.
+        # Il breakpoint finisce sull'ultimo blocco memorizzabile e avanza da
+        # solo a ogni turno. La soglia minima la controlla il server, che e' il
+        # solo a conoscere il conteggio vero dei token.
+        if self.config.mode == "automatico":
+            ctx.params["cache_control"] = dict(marker)
+            ctx.note(f"caching automatico delegato al server, TTL {ctx.cache_ttl}")
+            return
+
         info = model_info(ctx.model)
         minimum = info.cache_min_tokens
 

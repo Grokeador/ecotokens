@@ -16,3 +16,7 @@ ecotokens-dashboard.html
 
 # Repository di sola documentazione, tenuto separato (vedi README).
 pubblicazione/
+
+# Copertura dei test.
+.coverage
+htmlcov/

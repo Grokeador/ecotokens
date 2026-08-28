@@ -59,6 +59,20 @@ class CachePlannerSettings(BaseModel):
     """Piazzamento automatico dei breakpoint cache_control."""
 
     enabled: bool = True
+    # Chi piazza i breakpoint.
+    #
+    # "automatico" delega ad Anthropic: un solo `cache_control` in cima alla
+    # richiesta e il server mette il breakpoint sull'ultimo blocco
+    # memorizzabile, spostandolo in avanti a ogni turno. Costa zero righe e
+    # zero manutenzione.
+    #
+    # "manuale" e' il pianificatore di EcoTokens: fino a 4 breakpoint, soglia
+    # per modello, TTL dedotto dalla sessione. La documentazione ufficiale dice
+    # quando i breakpoint espliciti restano superiori - sezioni che cambiano
+    # con frequenze diverse, controllo fine, e conversazioni che superano la
+    # finestra di lookback di 20 blocchi - e vale la pena verificare su quale
+    # dei due sta il proprio carico invece di darlo per scontato.
+    mode: Literal["automatico", "manuale"] = "manuale"
     # L'API ne accetta al massimo 4 per richiesta.
     max_breakpoints: int = 4
     # La finestra di lookback e' di 20 blocchi: oltre quella distanza il

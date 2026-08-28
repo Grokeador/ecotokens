@@ -55,8 +55,25 @@ enabled = true
 ttl_hours = 72
 
 [cache_planner]
-# La leva di risparmio principale: fino al 90% sui token di prefisso riletti.
 enabled = true
+# Chi piazza i breakpoint.
+#
+#   "automatico" - delega ad Anthropic: un solo cache_control in cima e il
+#                  server mette il breakpoint sull'ultimo blocco, spostandolo
+#                  in avanti da solo. Zero manutenzione.
+#   "manuale"    - il pianificatore di EcoTokens: fino a 4 breakpoint, soglia
+#                  per modello, TTL dedotto dalla sessione.
+#
+# Misurato, e il risultato non e' quello che ci si aspetta: su una
+# conversazione sola che cresce il manuale costa lo 0,1-0,2% IN PIU'
+# dell'automatico, perche' piazza due breakpoint dove ne basta uno. Rende il
+# 19,9% quando piu' richieste DIVERSE condividono lo stesso prompt di sistema,
+# perche' li' l'automatico mette il breakpoint dopo la domanda e la voce che
+# crea non serve a nessun altro.
+#
+# Assistente con system prompt grande e tante domande diverse -> "manuale".
+# Una conversazione lunga per volta -> "automatico".
+mode = "manuale"
 max_breakpoints = 4
 intermediate_every_blocks = 15
 # Il primo turno scrive in cache. Sembra sprecato e invece no: prompt di sistema

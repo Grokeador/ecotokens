@@ -13,6 +13,7 @@ costruzione di EcoTokens.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -536,3 +537,35 @@ def scenarios_by_name(names: Iterable[str], project_root: Path | None = None) ->
             )
         selezionati.append(disponibili[name])
     return selezionati
+
+
+def corpus_fingerprint(scenarios: list[Scenario]) -> str:
+    """Impronta del *contenuto* del corpus, non del suo elenco.
+
+    `CORPUS_VERSION` cambia quando si aggiunge o si toglie uno scenario, ed e'
+    il controllo giusto per quella domanda. Non risponde pero' a un'altra, che
+    su questo corpus e' altrettanto seria: gli scenari sono gli stessi, ma
+    dicono ancora le stesse cose?
+
+    Su `costruzione` la risposta e' no. Legge i sorgenti veri del progetto al
+    momento dell'esecuzione, quindi ogni commit che allunga il codice cambia il
+    carico. Misurato: fra due ablazioni distanti poche ore il riferimento e'
+    passato da $6,3002 a $6,6338, un +5,3% che nessuna modifica al gateway
+    aveva prodotto. Dentro una singola esecuzione il corpus e' costante e i
+    confronti fra varianti reggono; sono quelli **fra esecuzioni** a essere
+    contaminati - cioe' esattamente la sezione dei progressi della dashboard.
+
+    L'impronta non risolve la deriva: la rende visibile. E' la scelta piu'
+    onesta fra le tre possibili, perche' congelare i sorgenti in un fixture
+    renderebbe i numeri confrontabili smettendo pero' di misurare il carico
+    vero, e non fare niente lascerebbe la dashboard a dichiarare progressi che
+    in parte sono crescita del metro.
+    """
+    digest = hashlib.sha256()
+    for scenario in scenarios:
+        digest.update(scenario.name.encode("utf-8"))
+        for payload in scenario.requests:
+            # sort_keys: l'ordine delle chiavi di un dizionario non e' parte
+            # del carico, e senza questo l'impronta cambierebbe da sola.
+            digest.update(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
+    return digest.hexdigest()[:12]

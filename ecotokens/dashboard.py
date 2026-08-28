@@ -1249,16 +1249,31 @@ def _progress(data: dict[str, Any]) -> str:
     </tr>"""
         )
 
+    if progresso.get("comparable"):
+        avviso = f"""<p class="caveat">Il confronto e' limitato alle misure dello stesso
+    corpus (<code>{_esc(progresso['corpus'])}</code>), con la stessa impronta di contenuto
+    (<code class="mono">{_esc(progresso.get('fingerprint', ''))}</code>): le due misure hanno
+    visto esattamente lo stesso carico.</p>"""
+    else:
+        prima = progresso.get("previous_fingerprint") or "sconosciuta"
+        adesso = progresso.get("fingerprint") or "sconosciuta"
+        avviso = f"""<p class="caveat"><span class="flag">confronto contaminato</span>
+    Le due misure hanno impronte di contenuto diverse
+    (<code class="mono">{_esc(prima)}</code> &rarr; <code class="mono">{_esc(adesso)}</code>):
+    l'elenco degli scenari e' lo stesso, ma il carico no. Lo scenario
+    <code>costruzione</code> legge i sorgenti veri del progetto al momento
+    dell'esecuzione, quindi ogni commit che allunga il codice sposta anche il
+    riferimento. <strong>Parte delle variazioni qui sotto e' crescita del metro, non
+    merito del gateway.</strong> La riga resta visibile perche' nasconderla sarebbe
+    peggio che segnalarla.</p>"""
+
     return f"""<section class="panel">
   <div class="panel-head">
     <h2>Progressi rispetto alla versione precedente</h2>
     <p>Ogni ottimizzazione confrontata con la misura del {_esc(quando)}, sullo stesso
     corpus di scenari. Le percentuali sono la quota di risparmio che quello stadio
     aggiunge da solo, non il totale.</p>
-    <p class="caveat">Il confronto e' limitato alle misure dello stesso corpus
-    (<code>{_esc(progresso['corpus'])}</code>). Aggiungere uno scenario cambia il
-    denominatore di tutte le percentuali: mettere a confronto corpus diversi
-    mostrerebbe progressi che non ci sono stati.</p>
+    {avviso}
   </div>
   <div class="table-wrap">
     <table>

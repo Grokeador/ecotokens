@@ -25,7 +25,15 @@ def richiesta(blocchi: list[dict], marcato: int | None = None) -> dict:
 
 
 def blocco(testo: str) -> dict:
-    return {"type": "text", "text": testo * 60}
+    """Un blocco abbastanza grosso da poter essere messo in cache davvero.
+
+    La misura non e' arbitraria: Opus 5 non memorizza prefissi sotto i 512
+    token, e sotto quella soglia l'API non segnala niente - la richiesta
+    riesce, la cache semplicemente non si crea. I blocchi di questi test erano
+    da una quindicina di token, quindi provavano il modello di caching su
+    richieste che la vera API non avrebbe mai messo in cache.
+    """
+    return {"type": "text", "text": testo * 2500}
 
 
 def test_senza_marker_nessuna_cache():
@@ -132,3 +140,78 @@ def test_i_conti_tornano():
     )
     assert totale > 0
     assert usage["input_tokens"] >= 0
+
+
+# --- la soglia minima, e il caching automatico -----------------------------
+
+
+def test_sotto_la_soglia_del_modello_la_cache_non_si_crea():
+    """E non viene segnalato niente: e' il punto.
+
+    Un marker su un prefisso troppo corto e' silenziosamente inefficace. La
+    richiesta riesce, `cache_creation_input_tokens` torna zero, e chi legge
+    crede di avere la cache attiva. Il simulatore deve riprodurre il silenzio,
+    non solo l'effetto.
+    """
+    state = StubState()
+    corto = {"type": "text", "text": "x" * 40}
+    payload = {
+        "model": "claude-opus-5",
+        "messages": [{"role": "user", "content": [{**corto, "cache_control": dict(MARKER)}]}],
+    }
+    usage = _usage_for(state, payload)
+    assert usage["cache_creation_input_tokens"] == 0
+    assert usage["cache_read_input_tokens"] == 0
+
+
+def test_la_soglia_dipende_dal_modello():
+    """Non e' monotona col prezzo: Opus 5 vuole 512 token, Haiku 4.5 quattromila.
+
+    Ne segue che passare a un modello piu' economico puo' spegnere la cache in
+    silenzio - ed e' esattamente cio' che fa il profilo aggressivo.
+    """
+    dimensione = [blocco("a")]
+    dimensione[0] = {**dimensione[0], "cache_control": dict(MARKER)}
+    messaggi = [{"role": "user", "content": dimensione}]
+
+    opus = _usage_for(StubState(), {"model": "claude-opus-5", "messages": messaggi})
+    haiku = _usage_for(StubState(), {"model": "claude-haiku-4-5", "messages": messaggi})
+
+    assert opus["cache_creation_input_tokens"] > 0
+    assert haiku["cache_creation_input_tokens"] == 0, (
+        "lo stesso prefisso supera i 512 token di Opus 5 ma non i 4096 di Haiku 4.5"
+    )
+
+
+def test_il_caching_automatico_mette_un_breakpoint_sull_ultimo_blocco():
+    """Un solo `cache_control` in cima, nessun marker sui blocchi.
+
+    E' la modalita' che Anthropic ha reso disponibile, e cambia cosa significa
+    "senza gateway": non piu' "nessuna cache", ma "un breakpoint gratis".
+    """
+    state = StubState()
+    payload = {
+        "model": "claude-opus-5",
+        "cache_control": dict(MARKER),
+        "messages": [{"role": "user", "content": [blocco("a")]}],
+    }
+    primo = _usage_for(state, payload)
+    assert primo["cache_creation_input_tokens"] > 0
+
+    # Il breakpoint avanza da solo: al turno dopo il prefisso viene riletto.
+    payload["messages"] = payload["messages"] + [
+        {"role": "assistant", "content": [blocco("b")]},
+        {"role": "user", "content": [blocco("c")]},
+    ]
+    secondo = _usage_for(state, payload)
+    assert secondo["cache_read_input_tokens"] > 0
+
+
+def test_senza_il_campo_in_cima_il_caching_automatico_non_si_attiva():
+    state = StubState()
+    payload = {
+        "model": "claude-opus-5",
+        "messages": [{"role": "user", "content": [blocco("a")]}],
+    }
+    usage = _usage_for(state, payload)
+    assert usage["cache_creation_input_tokens"] == 0

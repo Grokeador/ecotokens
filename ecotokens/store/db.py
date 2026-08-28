@@ -110,6 +110,11 @@ CREATE TABLE IF NOT EXISTS bench_runs (
     label       TEXT NOT NULL,
     mode        TEXT NOT NULL,
     corpus      TEXT,
+    -- Impronta del contenuto del corpus, non del suo elenco. Serve a sapere
+    -- se due misure sono confrontabili: lo scenario `costruzione` legge i
+    -- sorgenti veri del progetto, quindi il carico cresce insieme al codice e
+    -- due esecuzioni distanti nel tempo non misurano la stessa cosa.
+    fingerprint TEXT NOT NULL DEFAULT '',
     notes       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bench_runs_time ON bench_runs(created_at);
@@ -196,6 +201,7 @@ END;
 # esso invece che su un database vuoto, cioe' proprio dove i dati contano.
 COLONNE_AGGIUNTE: list[tuple[str, str, str]] = [
     ("usage_events", "cache_ttl", "TEXT NOT NULL DEFAULT '5m'"),
+    ("bench_runs", "fingerprint", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

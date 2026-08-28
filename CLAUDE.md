@@ -29,9 +29,16 @@ Queste non sono teoria: sono i vincoli che governano il costo di *questa*
 sessione, non solo del gateway.
 
 1. **Il prefisso è tutto.** Il prompt caching è un match di prefisso: un byte
-   diverso all'inizio invalida tutto ciò che segue. Vale l'88% del risparmio
-   misurato. In pratica, in sessione: non rileggere file già letti, non
-   rifare la stessa ricerca con parole diverse, non cambiare modello a metà.
+   diverso all'inizio invalida tutto ciò che segue, e vale il 67,8% del
+   risparmio misurato. In pratica, in sessione: non rileggere file già letti,
+   non rifare la stessa ricerca con parole diverse, non cambiare modello a
+   metà. **Ma quel 67,8% non è del gateway**: Anthropic lo dà a chiunque con
+   un `cache_control` in cima alla richiesta. Il pianificatore di EcoTokens ne
+   aggiunge 0,7 — e quello 0,7 è la media fra un −0,2% sulle conversazioni
+   singole e un +19,9% quando più richieste diverse condividono un prefisso.
+   La lezione di metodo conta più del numero: *un riferimento invecchia*.
+   Finché non lo si aggiorna, si misura quanto costava non usare una funzione
+   che nel frattempo è diventata gratis.
 2. **Ogni turno rispedisce tutto.** Il costo di un ciclo agentico cresce con il
    *numero di turni*, non solo con la loro dimensione. Chiamate indipendenti
    vanno fatte **nello stesso messaggio**: due Bash in parallelo costano un

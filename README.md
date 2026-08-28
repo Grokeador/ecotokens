@@ -45,13 +45,14 @@ stadi di ottimizzazione (vedi [Misurare, invece di credere](#misurare-invece-di-
 
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
-| **Prompt caching automatico** | fino al 90% sui token di prefisso riletti | nessuno |
+| **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, ma **+19,9%** a prefisso condiviso — [vedi sotto](#la-riga-che-cambia-la-lettura-di-tutte-le-altre) | nessuno |
 | **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno al default |
 | **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
 | **Riscrittura del prompt** | −11% su prompt scritti in modo prolisso, 0,2% sul corpus completo | cambia il testo, non il senso |
 | **Cache esatta** | richieste identiche servite a costo zero; **−56%** quando differiscono solo per spaziatura | nessuno |
 | **Cache semantica** *(spenta)* | richieste simili servite a costo zero | può restituire risposte sbagliate |
+| **Embedder proprio** | la cache semantica accetta qualunque oggetto con `embed(testi)`: chi ne ha già uno non deve installarne un secondo | — |
 | **Declassamento di modello** *(spento)* | modello meno costoso sulle richieste semplici | azzera la cache, vedi sotto |
 
 Le due tecniche che possono cambiare il *contenuto* di una risposta sono
@@ -336,13 +337,60 @@ ecotokens ablate
 Gli stadi si accendono uno alla volta: la differenza fra un gradino e il
 precedente è il contributo di quello stadio.
 
-| Stadio | Contributo |
-|---|---:|
-| prompt caching | **66,6%** |
-| effort adattivo | 3,4% |
-| cache esatta | 2,2% |
-| potatura del contesto | 1,2% |
-| riscrittura del prompt | 0,2% |
+| Stadio | Contributo | |
+|---|---:|---|
+| **caching automatico** | **67,8%** | non è del gateway: lo dà Anthropic |
+| pianificatore EcoTokens | 0,7% | quello che aggiunge *sopra* al precedente |
+| effort adattivo | 2,9% | |
+| cache esatta | 1,9% | |
+| potatura del contesto | 1,9% | |
+| riscrittura del prompt | 0,2% | |
+| effort sempre basso | 2,5% | solo nel profilo aggressivo |
+| modello economico | 17,4% | solo nel profilo aggressivo |
+
+#### La riga che cambia la lettura di tutte le altre
+
+Il primo gradino **non è merito di EcoTokens**. Anthropic offre il caching
+automatico: un solo `cache_control` in cima alla richiesta, il breakpoint
+sull'ultimo blocco memorizzabile, che avanza da solo a ogni turno. Chiunque lo
+ottiene con una riga, senza gateway.
+
+Per un anno questo README ha chiamato il prompt caching «la leva di risparmio
+principale» attribuendogli il 66%. Era la leva più forte del *prompt caching* —
+che non è la stessa cosa — e da quando basta una riga per averla non è più
+merito di nessuno. Il riferimento «senza gateway» resta nella scala perché
+sapere quanto costa non avere la cache è comunque utile, ma **ogni percentuale
+del gateway va letta a partire dal 67,8%**.
+
+Il pianificatore di EcoTokens ne aggiunge 0,7. E quello 0,7 è una media che
+nasconde due comportamenti opposti:
+
+| Carico | Automatico | EcoTokens | |
+|---|---:|---:|---|
+| chat, 8 turni | $0,1999 | $0,2003 | **−0,2%** |
+| ciclo agentico | $0,3191 | $0,3195 | **−0,1%** |
+| costruzione | $1,3240 | $1,3248 | **−0,1%** |
+| **domande diverse, stesso system prompt** | $0,2776 | $0,2224 | **+19,9%** |
+
+Su una conversazione sola che cresce il pianificatore **costa** un filo di più:
+piazza due breakpoint dove ne basta uno, e la seconda scrittura si paga 1,25×
+senza aggiungere niente. Il server fa lo stesso lavoro meglio.
+
+Rende invece quando **più richieste diverse condividono un prefisso**, ed è
+strutturale: il caching automatico mette il breakpoint dopo la domanda, quindi
+la voce che crea non serve a nessun'altra domanda. Un breakpoint su
+`system`+`tools` crea invece una voce che tutte le richieste successive
+rileggono.
+
+```toml
+[cache_planner]
+mode = "automatico"   # delega al server: meglio su conversazioni singole
+mode = "manuale"      # breakpoint espliciti: meglio a prefisso condiviso
+```
+
+Se il tuo carico è un assistente con un system prompt grande e tante domande
+diverse — classificazioni, estrazioni, supporto — resta su `manuale`. Se è una
+conversazione lunga per volta, `automatico` costa meno e non ha manutenzione.
 
 ### Potare senza distruggere la cache
 
