@@ -651,4 +651,55 @@ TUNING_LOG: list[TuningEntry] = [
             "scegliere, e la piu' rassicurante delle due vince."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Dal vivo il declassamento del modello valeva zero, e a volte meno di zero",
+        finding=(
+            "La contabilita' prezzava la baseline - 'quanto sarebbe costata questa "
+            "richiesta senza gateway' - sul modello che il **router aveva scelto**, "
+            "non su quello che il client aveva chiesto. Il router pero' riscrive "
+            "`ctx.model`, quindi con il declassamento acceso il confronto diventava "
+            "'Haiku senza cache contro Haiku con cache': il risparmio del cambio di "
+            "modello spariva del tutto. Sul banco lo stesso stadio vale il 17,3%, "
+            "perche' li' il confronto e' fra due esecuzioni intere e il modello di "
+            "partenza non viene perso. Le due misure dicevano cose diverse dello "
+            "stesso stadio, e nessuno le aveva mai messe una accanto all'altra: la "
+            "pagina che le ha affiancate e' stata scritta questa settimana."
+        ),
+        effect=(
+            "Peggio dello zero: bastava una scrittura di cache non ancora ripagata "
+            "perche' il risparmio risultasse **negativo**, e la console apriva con "
+            "'4 richieste sono costate piu' che senza gateway'. E' la terza volta che "
+            "uno strumento rotto dichiara dannoso il gateway. Il contesto conserva ora "
+            "`requested_model`, valorizzato in `__post_init__` cosi' nessun costruttore "
+            "puo' dimenticarsene, e la baseline si prezza su quello: sullo stesso "
+            "traffico il risparmio passa da -0,0% a 80,3%. Resta una approssimazione "
+            "dichiarata in pagina: i token di prompt sono gli stessi nei due casi e "
+            "quella meta' del conto e' esatta, quelli generati no, perche' un modello "
+            "diverso avrebbe scritto una risposta di lunghezza diversa."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Contare le note per stadio le contava una per richiesta",
+        finding=(
+            "La console attribuisce ogni nota allo stadio che l'ha prodotta e ne conta "
+            "le occorrenze; gli avvisi sono conteggi di quelle. Ma le note citano "
+            "quantita' - 'prompt stimato 2188 token, sotto la soglia' - e ogni "
+            "richiesta ne ha una sua, quindi quindici richieste producevano quindici "
+            "note distinte da uno. Con il taglio alle prime sei, il primo avviso della "
+            "pagina diceva '11 richieste' dove erano 14, e la riga sotto ne mostrava 14: "
+            "due numeri contrari nella stessa schermata."
+        ),
+        effect=(
+            "Le note si contano su una forma normalizzata - le cifre sostituite - e "
+            "l'elenco non viene piu' troncato, perche' normalizzate le forme distinte "
+            "sono poche: una per cosa che lo stadio sa fare. Mostrata resta una nota "
+            "vera, la piu' recente di quella forma, perche' 'prompt stimato N token' "
+            "non e' una frase che qualcuno voglia leggere. La lezione e' la solita in "
+            "veste nuova: un conteggio troncato non e' un conteggio approssimato, e' un "
+            "conteggio sbagliato, e sembra giusto."
+        ),
+    ),
+
 ]

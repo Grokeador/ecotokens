@@ -8,7 +8,7 @@ from typing import Any
 
 import anthropic
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from .api.schemas import ChatCompletionRequest, error_payload
 from .config import Settings, load_settings
@@ -296,6 +296,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {"status": "ok", "version": "0.1.0"}
+
+    # La console sta sulla radice, non sotto /admin: e' la pagina che si apre
+    # dopo `ecotokens serve`, e un indirizzo che si ricorda vale quanto una
+    # funzione in piu'.
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/ui", response_class=HTMLResponse)
+    async def console() -> HTMLResponse:
+        from .console import render_console
+
+        return HTMLResponse(content=render_console())
 
     return app
 

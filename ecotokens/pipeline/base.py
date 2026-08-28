@@ -59,6 +59,12 @@ class RequestContext:
     model: str
     params: dict[str, Any]
     stream: bool
+    # Il modello che il client aveva chiesto. Il router puo' riscrivere
+    # `model`, e da quel momento non esiste piu' nessun posto da cui risalire
+    # a cosa sarebbe successo senza gateway: e' la definizione stessa di
+    # baseline che se ne va. Si valorizza da sola in __post_init__, cosi'
+    # nessun costruttore puo' dimenticarsene.
+    requested_model: str = ""
     # Dialetto della richiesta in arrivo. Gli stadi non devono guardarlo:
     # lavorano tutti sui parametri Anthropic, che sono gli stessi in
     # entrambi i casi. Serve alle rotte, per sapere come rispondere.
@@ -70,6 +76,18 @@ class RequestContext:
     headers: dict[str, str] = field(default_factory=dict)
 
     notes: list[str] = field(default_factory=list)
+    # Le stesse note, ma attribuite allo stadio che le ha prodotte. Non e' una
+    # duplicazione oziosa: `notes` contiene anche cio' che nasce fuori dalla
+    # pipeline - le note della traduzione, per esempio - e attribuire quelle a
+    # uno stadio sarebbe falso. L'attribuzione la fa la pipeline osservando
+    # cosa e' comparso durante la chiamata, non lo stadio dichiarandola: uno
+    # stadio che smette di fare qualcosa smette di essere contato, senza che
+    # nessuno debba ricordarsi di aggiornare un contatore.
+    stage_notes: dict[str, list[str]] = field(default_factory=dict)
+    # Gli stadi accesi per questa richiesta. Serve a distinguere "non ha fatto
+    # niente" da "era spento": senza il denominatore, un contatore a zero non
+    # dice quale delle due.
+    stages_enabled: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
     betas: list[str] = field(default_factory=list)
 
@@ -123,6 +141,10 @@ class RequestContext:
     # dialetto restituirebbe una risposta della forma sbagliata.
     upstream_response: dict[str, Any] | None = None
 
+    def __post_init__(self) -> None:
+        if not self.requested_model:
+            self.requested_model = self.model
+
     @property
     def session_id(self) -> str | None:
         return self.session.id if self.session else None
@@ -146,6 +168,11 @@ class RequestContext:
 
     def note(self, message: str) -> None:
         self.notes.append(message)
+
+    def attribuisci(self, stadio: str, note: list[str]) -> None:
+        """Assegna a uno stadio le note comparse mentre girava."""
+        if note:
+            self.stage_notes.setdefault(stadio, []).extend(note)
 
     def use_beta(self, flag: str) -> None:
         """Segna un beta header necessario: la chiamata passera' da client.beta."""
@@ -196,10 +223,15 @@ class Pipeline:
         self.stages = stages
 
     async def before(self, ctx: RequestContext) -> None:
+        ctx.stages_enabled = [
+            stage.name for stage in self.stages if getattr(stage, "enabled", True)
+        ]
         for stage in self.stages:
             if not getattr(stage, "enabled", True):
                 continue
+            prima = len(ctx.notes)
             await stage.before(ctx)
+            ctx.attribuisci(stage.name, ctx.notes[prima:])
             if ctx.short_circuit is not None:
                 # Un hit di cache rende inutile tutto il resto della catena.
                 return
@@ -208,4 +240,6 @@ class Pipeline:
         for stage in reversed(self.stages):
             if not getattr(stage, "enabled", True):
                 continue
+            prima = len(ctx.notes)
             await stage.after(ctx, message)
+            ctx.attribuisci(stage.name, ctx.notes[prima:])

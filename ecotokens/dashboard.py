@@ -8,8 +8,16 @@ Raccoglie in un solo posto le tre fonti di verita' del progetto:
   il suo contributo;
 * il **traffico reale** gia' passato dal gateway, letto dal registro consumi.
 
-Il risultato e' una pagina HTML autonoma: nessuna dipendenza esterna, nessuna
-richiesta di rete, si apre da file o si serve da ``/dashboard``.
+Il risultato e' una pagina HTML che si apre da file o si serve da
+``/dashboard``. Autonoma con un'eccezione, che vale la pena dichiarare invece
+di lasciar scoprire: i caratteri arrivano da Google Fonts, quindi aprirla apre
+due connessioni verso l'esterno. Degrada bene senza rete - le famiglie di
+ripiego sono dichiarate - ma "nessuna richiesta di rete", che questa riga
+diceva prima, era falso.
+
+La console dal vivo (`console.py`) ha fatto la scelta opposta e non esce mai:
+mostra il traffico dell'utente, e una pagina che lo mostra non ha motivo di
+segnalare a nessuno quando la si guarda.
 """
 
 from __future__ import annotations

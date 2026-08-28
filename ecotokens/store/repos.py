@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from statistics import median
 from typing import Any
 
 from ..pricing import Usage
 from .db import Database
+
+# Qualunque sequenza di cifre, con o senza separatori: serve a ridurre una nota
+# alla frase che la descrive, togliendo le quantita' che cambiano a ogni
+# richiesta.
+_NUMERI = re.compile(r"[0-9][0-9.,]*")
 
 
 def _now() -> float:
@@ -320,15 +328,27 @@ class Store:
         cache_ttl: str = "5m",
         latency_ms: float | None = None,
         notes: list[str] | None = None,
+        stage_notes: dict[str, list[str]] | None = None,
+        stages_enabled: list[str] | None = None,
+        overhead_tokens: int = 0,
+        aux_cost_usd: float = 0.0,
+        client_format: str = "",
     ) -> None:
         ts = _now()
         day, month = _day_month(ts)
+        # `enabled` e' il denominatore di ogni conteggio per stadio: senza,
+        # "non e' mai intervenuto" e "non era acceso" darebbero lo stesso zero.
+        stadi = json.dumps(
+            {"enabled": list(stages_enabled or []), "acted": stage_notes or {}},
+            ensure_ascii=False,
+        )
         await self.db.execute(
             """INSERT INTO usage_events
                (session_id, ts, day, month, model, source, input_tokens, output_tokens,
                 cache_creation_tokens, cache_read_tokens, cache_ttl, cost_usd,
-                baseline_cost_usd, saved_usd, latency_ms, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                baseline_cost_usd, saved_usd, latency_ms, notes,
+                stages, overhead_tokens, aux_cost_usd, client_format)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 ts,
@@ -346,6 +366,10 @@ class Store:
                 saved_usd,
                 latency_ms,
                 json.dumps(notes or [], ensure_ascii=False),
+                stadi,
+                int(overhead_tokens),
+                float(aux_cost_usd),
+                client_format,
             ),
         )
 
@@ -448,6 +472,165 @@ class Store:
             for riga in rows
         ]
         return audit_cache_writes(eventi).to_dict()
+
+    @staticmethod
+    def _forma_della_nota(nota: str) -> str:
+        """La nota senza i suoi numeri: "2188 token" e "2026 token" sono la stessa cosa.
+
+        Senza questo, ogni nota che cita una quantita' e' una nota diversa, e
+        contarle significa contare le richieste una per una. La frase che resta
+        e' quella che descrive **cosa** lo stadio ha fatto, che e' la domanda.
+        """
+        return _NUMERI.sub("N", nota)
+
+    async def stage_activity(self, limit: int = 20_000) -> list[dict[str, Any]]:
+        """Quante volte ogni stadio ha fatto qualcosa, sul traffico vero.
+
+        E' la domanda che il progetto si e' imposto di fare **prima** di
+        raffinare uno stadio, e finora sapeva rispondere solo sul banco. Il
+        conto e' su due denominatori diversi, e la differenza e' tutto il
+        punto:
+
+        * `enabled_in` - le richieste in cui lo stadio era acceso;
+        * `acted_in`   - quelle in cui ha prodotto almeno una nota.
+
+        Uno stadio acceso su mille richieste e intervenuto su zero non e' uno
+        stadio da migliorare: e' uno stadio da capire perche' tace. E' cosi'
+        che si e' scoperto che l'effort adattivo veniva spento da un veto sul
+        45% del traffico, dopo mesi passati a raffinarne l'euristica.
+
+        Uno stadio che agisce senza scrivere una nota risulta inattivo. E' una
+        distorsione nota e si preferisce a quella opposta: contarlo per il
+        solo fatto di essere stato chiamato conterebbe tutto, sempre.
+        """
+        righe = await self.db.query(
+            "SELECT stages FROM usage_events ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        accesi: Counter[str] = Counter()
+        agiti: Counter[str] = Counter()
+        campioni: dict[str, Counter[str]] = {}
+        # La forma normalizzata serve a contare, non a leggere: "sessione
+        # NeeNfaN" non e' una frase. Di ogni forma si tiene un originale da
+        # mostrare - il primo incontrato, e siccome le righe arrivano dalla
+        # piu' recente, e' quello che descrive lo stato di adesso.
+        esempi: dict[str, dict[str, str]] = {}
+        registrate = 0
+        for riga in righe:
+            grezzo = riga["stages"] or ""
+            if not grezzo:
+                # Riga scritta prima che questa colonna esistesse. Contarla nel
+                # denominatore la farebbe sembrare una richiesta in cui nessuno
+                # stadio ha fatto niente, che e' una conclusione, non un dato.
+                continue
+            try:
+                dati = json.loads(grezzo)
+            except json.JSONDecodeError:
+                continue
+            registrate += 1
+            for nome in dati.get("enabled", []):
+                accesi[nome] += 1
+            for nome, note in (dati.get("acted") or {}).items():
+                agiti[nome] += 1
+                campione = campioni.setdefault(nome, Counter())
+                esempio = esempi.setdefault(nome, {})
+                for nota in note:
+                    forma = self._forma_della_nota(nota)
+                    campione[forma] += 1
+                    esempio.setdefault(forma, nota)
+
+        esito = [
+            {
+                "stage": nome,
+                "enabled_in": totale,
+                "acted_in": agiti.get(nome, 0),
+                "ratio": agiti.get(nome, 0) / totale if totale else 0.0,
+                # Tutte le forme distinte con la loro frequenza, non solo le
+                # prime: e' da qui che si ricavano gli avvisi della console, e
+                # un conteggio troncato e' un conteggio sbagliato. Normalizzate
+                # le forme sono poche - una per cosa che lo stadio sa fare.
+                "notes": [
+                    [esempi.get(nome, {}).get(forma, forma), quante]
+                    for forma, quante in (campioni.get(nome) or Counter()).most_common()
+                ],
+            }
+            for nome, totale in accesi.items()
+        ]
+        esito.sort(key=lambda voce: (-voce["ratio"], voce["stage"]))
+        return [{**voce, "requests_considered": registrate} for voce in esito]
+
+    async def latency_report(self, limit: int = 20_000) -> list[dict[str, Any]]:
+        """Quanto ci mette una risposta, separata per provenienza.
+
+        E' l'altra faccia del risparmio: un hit di cache costa zero token, e la
+        differenza di latenza rispetto a una chiamata vera dice quanto vale
+        anche per chi aspetta. La mediana, non la media: una sola richiesta
+        lenta sposta la media e non sposta l'esperienza.
+        """
+        righe = await self.db.query(
+            """SELECT source, latency_ms FROM usage_events
+               WHERE latency_ms IS NOT NULL ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        )
+        per_fonte: dict[str, list[float]] = {}
+        for riga in righe:
+            per_fonte.setdefault(riga["source"], []).append(float(riga["latency_ms"]))
+        esito = []
+        for fonte, valori in per_fonte.items():
+            valori.sort()
+            esito.append(
+                {
+                    "source": fonte,
+                    "requests": len(valori),
+                    "median_ms": median(valori),
+                    "p95_ms": valori[min(len(valori) - 1, int(len(valori) * 0.95))],
+                }
+            )
+        esito.sort(key=lambda voce: voce["median_ms"])
+        return esito
+
+    async def overhead_report(self) -> dict[str, Any]:
+        """I token che il gateway aggiunge di suo, e le chiamate che fa per se'.
+
+        Sono le due voci che un gateway ha interesse a non mostrare: entrambe
+        sono costi che nascono qui e che l'utente paga senza averli chiesti.
+        """
+        riga = await self.db.query_one(
+            """SELECT COALESCE(SUM(overhead_tokens), 0) AS overhead_tokens,
+                      COALESCE(SUM(aux_cost_usd), 0)    AS aux_cost_usd,
+                      COALESCE(SUM(cost_usd), 0)        AS cost_usd,
+                      COUNT(*)                          AS requests
+               FROM usage_events"""
+        )
+        dati = dict(riga) if riga else {}
+        costo = float(dati.get("cost_usd") or 0)
+        dati["aux_ratio"] = (float(dati.get("aux_cost_usd") or 0) / costo) if costo else 0.0
+        return dati
+
+    async def recent_events(self, limit: int = 25) -> list[dict[str, Any]]:
+        """Le ultime richieste, con cio' che ogni stadio ha fatto a ciascuna."""
+        righe = await self.db.query(
+            """SELECT id, ts, session_id, model, source, client_format,
+                      input_tokens, output_tokens, cache_creation_tokens,
+                      cache_read_tokens, cache_ttl, cost_usd, baseline_cost_usd,
+                      saved_usd, latency_ms, overhead_tokens, notes, stages
+               FROM usage_events ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        )
+        eventi = []
+        for riga in righe:
+            voce = dict(riga)
+            for campo, vuoto in (("notes", []), ("stages", {})):
+                try:
+                    voce[campo] = json.loads(voce[campo] or "null") or vuoto
+                except json.JSONDecodeError:
+                    voce[campo] = vuoto
+            voce["prompt_tokens"] = (
+                int(voce["input_tokens"])
+                + int(voce["cache_creation_tokens"])
+                + int(voce["cache_read_tokens"])
+            )
+            eventi.append(voce)
+        return eventi
 
     # -- cache esatta -----------------------------------------------------
 

@@ -53,6 +53,19 @@ async def clear_cache(gateway=Depends(_gateway)) -> dict[str, Any]:
     return {"status": "cache svuotate"}
 
 
+@router.get("/live")
+async def live(gateway=Depends(_gateway)) -> dict[str, Any]:
+    """Tutto cio' che la console mostra, in JSON.
+
+    Legge soltanto: nessuna misura viene eseguita qui. Una pagina che si
+    aggiorna da sola non deve poter innescare lavoro, altrimenti tenerla
+    aperta cambia cio' che sta osservando.
+    """
+    from ..console import build_console_data
+
+    return await build_console_data(gateway)
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(measure: bool = False, gateway=Depends(_gateway)) -> HTMLResponse:
     """Dashboard delle misure.

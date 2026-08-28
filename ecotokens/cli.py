@@ -75,7 +75,11 @@ def serve(
     )
 
     console.print(f"[bold green]EcoTokens[/] in ascolto su [cyan]http://{host}:{port}/v1[/]")
-    console.print("Nei client basta impostare questo indirizzo come base_url.\n")
+    console.print("Nei client basta impostare questo indirizzo come base_url.")
+    console.print(
+        f"Console dal vivo: [cyan]http://{host}:{port}/[/] "
+        "[dim]- cosa fa ogni stadio, richiesta per richiesta[/]\n"
+    )
 
     from .server import create_app
 

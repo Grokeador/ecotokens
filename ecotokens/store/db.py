@@ -85,7 +85,20 @@ CREATE TABLE IF NOT EXISTS usage_events (
     baseline_cost_usd       REAL NOT NULL DEFAULT 0,
     saved_usd               REAL NOT NULL DEFAULT 0,
     latency_ms              REAL,
-    notes                   TEXT
+    notes                   TEXT,
+    -- Note attribuite allo stadio che le ha prodotte, piu' l'elenco degli
+    -- stadi accesi: senza il secondo, uno stadio a zero interventi non si
+    -- distingue da uno spento.
+    stages                  TEXT NOT NULL DEFAULT '',
+    -- Token che il gateway ha aggiunto di suo al prompt. L'utente li paga
+    -- senza averli scritti.
+    overhead_tokens         INTEGER NOT NULL DEFAULT 0,
+    -- Spesa delle chiamate che il gateway fa per conto proprio (riassunti,
+    -- estrazione dei fatti). E' dentro cost_usd, ma va potuta separare:
+    -- altrimenti uno stadio che chiama un modello sembra gratuito.
+    aux_cost_usd            REAL NOT NULL DEFAULT 0,
+    -- Porta d'ingresso: dialetto OpenAI o nativo Anthropic.
+    client_format           TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_events(day);
 CREATE INDEX IF NOT EXISTS idx_usage_month ON usage_events(month);
@@ -202,6 +215,15 @@ END;
 COLONNE_AGGIUNTE: list[tuple[str, str, str]] = [
     ("usage_events", "cache_ttl", "TEXT NOT NULL DEFAULT '5m'"),
     ("bench_runs", "fingerprint", "TEXT NOT NULL DEFAULT ''"),
+    # Le quattro grandezze che il gateway calcolava gia' e poi buttava via.
+    # Non e' stato un risparmio: senza di esse, sul traffico vero non si poteva
+    # rispondere a "quante volte ogni stadio ha fatto qualcosa", che e' la
+    # domanda che il progetto si e' imposto di fare prima di raffinare uno
+    # stadio. Il default vuoto va letto come "non registrato", non come zero.
+    ("usage_events", "stages", "TEXT NOT NULL DEFAULT ''"),
+    ("usage_events", "overhead_tokens", "INTEGER NOT NULL DEFAULT 0"),
+    ("usage_events", "aux_cost_usd", "REAL NOT NULL DEFAULT 0"),
+    ("usage_events", "client_format", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

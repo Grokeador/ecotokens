@@ -46,17 +46,21 @@ stadi di ottimizzazione (vedi [Misurare, invece di credere](#misurare-invece-di-
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
 | **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, ma **+19,9%** a prefisso condiviso — [vedi sotto](#la-riga-che-cambia-la-lettura-di-tutte-le-altre) | nessuno |
-| **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno al default |
+| **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno; ma il profilo predefinito va oltre e lo tiene **sempre** al minimo |
 | **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
 | **Riscrittura del prompt** | −11% su prompt scritti in modo prolisso, 0,2% sul corpus completo | cambia il testo, non il senso |
 | **Cache esatta** | richieste identiche servite a costo zero; **−56%** quando differiscono solo per spaziatura | nessuno |
 | **Cache semantica** *(spenta)* | richieste simili servite a costo zero | può restituire risposte sbagliate |
 | **Embedder proprio** | la cache semantica accetta qualunque oggetto con `embed(testi)`: chi ne ha già uno non deve installarne un secondo | — |
-| **Declassamento di modello** *(spento)* | modello meno costoso sulle richieste semplici | azzera la cache, vedi sotto |
+| **Declassamento di modello** *(acceso nel profilo predefinito)* | 17,5%, più di tutti gli altri stadi tranne il caching | **cambia la risposta**, e azzera la cache — [vedi sotto](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione) |
 
-Le due tecniche che possono cambiare il *contenuto* di una risposta sono
-disattivate di default. Accenderle è una scelta, non un default.
+Il gateway esce sul profilo **aggressivo**, che cambia modello ed effort: una
+parte del risparmio non è la stessa risposta pagata meno, è un'altra risposta a
+un prezzo diverso. Con `profilo = "prudente"` il contenuto non viene mai
+toccato e il risparmio scende dal 95,3% al 75,2%. La distinzione è sviluppata
+in [I due profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione);
+la cache semantica resta spenta in entrambi.
 
 ## Tre vincoli che spiegano il progetto
 
@@ -113,6 +117,33 @@ Ogni valore si può sovrascrivere da ambiente con
 `ECOTOKENS_<SEZIONE>__<CAMPO>`, per esempio `ECOTOKENS_SERVER__PORT=9000`.
 
 ## Vedere quanto si risparmia
+
+Con il gateway acceso, la console dal vivo sta sulla radice:
+
+```
+http://localhost:8000/
+```
+
+Mostra il **traffico vero** passato di qui — non un carico simulato — e si
+aggiorna da sola ogni cinque secondi: risparmio contro la baseline, dove
+finiscono i token di prompt, la spesa di oggi contro il tetto, la latenza per
+provenienza, e le ultime richieste una per una, ognuna apribile su cosa ha
+fatto ciascuno stadio.
+
+Il pannello centrale è **quante volte ogni stadio ha fatto qualcosa**, con due
+denominatori distinti: le richieste in cui lo stadio era acceso e quelle in cui
+è intervenuto. La differenza è tutto il punto — uno stadio acceso su mille
+richieste e intervenuto su zero non è uno stadio da migliorare, è uno stadio da
+capire perché tace. È così che si è scoperto che l'effort adattivo veniva spento
+da un veto sul 45% del traffico, dopo mesi passati a raffinarne l'euristica.
+
+Gli avvisi in cima sono conteggi, non giudizi: ognuno porta il proprio numero.
+L'ultima sezione elenca ciò che la pagina **non** sa misurare, che è la parte
+che si è più tentati di lasciar fuori. La console non esce mai in rete: nessun
+font remoto, nessun CDN — mostra il traffico dell'utente, e non ha motivo di
+segnalare a nessuno quando la si guarda.
+
+Gli stessi dati in JSON su `/admin/live`, e a riga di comando:
 
 ```bash
 ecotokens stats
@@ -821,6 +852,17 @@ interazioni fra stadi, strategie di compattazione, livelli di riscrittura del
 prompt, storico delle misure e registro delle correzioni. Il gateway la serve
 anche su `/admin/dashboard`.
 
+Dashboard e console rispondono a due domande diverse, e vale la pena non
+confonderle: la dashboard esegue un **corpus finto** due volte, con e senza gli
+stadi, e dice *quanto risparmierebbe*; la console legge il **traffico vero** e
+dice *quanto ha risparmiato*. Tenerle separate ha già ripagato — affiancandole
+si è visto che dicevano cose diverse dello stesso stadio, e a sbagliare era la
+seconda (vedi la voce sul declassamento nel registro delle correzioni).
+
+A differenza della console, la dashboard carica i caratteri da Google Fonts:
+aprirla apre due connessioni verso l'esterno. Senza rete degrada sui caratteri
+di sistema.
+
 Include una sezione **Progressi rispetto alla versione precedente**: ogni
 ottimizzazione confrontata con la misura precedente dello stesso corpus, con la
 variazione del suo contributo e l'esito (`migliorato`, `peggiorato`,
@@ -998,6 +1040,8 @@ poi la cache venga davvero letta.
 |---|---|
 | `POST /v1/chat/completions` | compatibile OpenAI, streaming incluso |
 | `GET /v1/models` | catalogo dei modelli, con prezzi e finestra di contesto |
+| `GET /` (o `/ui`) | console dal vivo del traffico vero |
+| `GET /admin/live` | gli stessi dati in JSON, sola lettura |
 | `GET /admin/stats` | statistiche di consumo e risparmio |
 | `GET /admin/sessions` | sessioni riconosciute |
 | `POST /admin/cache/prune` | pulizia delle voci scadute |

@@ -61,6 +61,10 @@ def client(settings, stub):
 
     with TestClient(app) as test_client:
         test_client.stub = state
+        # Comodo per i test che devono guardare il registro dopo una richiesta
+        # invece che la risposta: il gateway e' lo stesso oggetto che ha
+        # servito la chiamata, non una copia costruita a parte.
+        test_client.gateway = gateway
         yield test_client
 
 

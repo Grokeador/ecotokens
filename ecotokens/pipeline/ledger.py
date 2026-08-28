@@ -25,6 +25,12 @@ class LedgerStage(BaseStage):
     name = "ledger"
 
     async def after(self, ctx: RequestContext, message: Any | None) -> None:
+        # La pipeline attribuisce a ogni stadio le note comparse mentre girava,
+        # ma lo fa **dopo** che lo stadio e' tornato: la contabilita' scrive la
+        # riga prima di quel momento, quindi le proprie note se le attribuisce
+        # da sola. E' l'unico stadio che ha questo problema, ed e' per una
+        # ragione strutturale: e' quello che scrive il registro.
+        prima_delle_proprie = len(ctx.notes)
         if ctx.source == SOURCE_API:
             if message is None:
                 return
@@ -33,7 +39,20 @@ class LedgerStage(BaseStage):
             )
             ctx.usage = usage
             ctx.cost_usd = cost_usd(ctx.model, usage, ctx.cache_ttl)
-            baseline = baseline_cost_usd(ctx.model, usage)
+            # Sul modello **chiesto**, non su quello effettivamente usato.
+            # Con il declassamento acceso i due differiscono, e prezzare la
+            # baseline sul modello economico significa confrontare il gateway
+            # con se stesso: il risparmio del declassamento sparisce, e una
+            # scrittura di cache non ancora ripagata basta a far risultare il
+            # gateway dannoso. E' successo, ed e' quello che ha fatto scoprire
+            # questa riga.
+            #
+            # I token di prompt sono gli stessi in entrambi i casi, quindi
+            # quella meta' del conto e' esatta. Quelli generati no: un modello
+            # diverso avrebbe scritto una risposta di lunghezza diversa, e qui
+            # si prezza la lunghezza osservata alla tariffa dell'altro. E' la
+            # sola approssimazione del conto, ed e' dichiarata in pagina.
+            baseline = baseline_cost_usd(ctx.requested_model, usage)
             # Le chiamate che il gateway ha fatto per conto proprio - il
             # riassunto di compattazione - le paga comunque l'utente: entrano
             # nel conto, altrimenti uno stadio che chiama un modello sembra
@@ -57,6 +76,7 @@ class LedgerStage(BaseStage):
             baseline = ctx.saved_usd
             ctx.cost_usd = 0.0
 
+        ctx.attribuisci(self.name, ctx.notes[prima_delle_proprie:])
         await ctx.store.record_usage(
             session_id=ctx.session_id,
             model=ctx.model,
@@ -68,6 +88,11 @@ class LedgerStage(BaseStage):
             cache_ttl=ctx.cache_ttl,
             latency_ms=ctx.elapsed_ms,
             notes=ctx.notes,
+            stage_notes=ctx.stage_notes,
+            stages_enabled=ctx.stages_enabled,
+            overhead_tokens=ctx.overhead_tokens,
+            aux_cost_usd=ctx.aux_cost_usd,
+            client_format=ctx.client_format,
         )
 
         logger.info(
