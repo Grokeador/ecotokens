@@ -204,3 +204,37 @@ def _ha_marker(payload: dict) -> bool:
     """Vero se la richiesta contiene almeno un cache_control."""
     testo = json.dumps(payload, default=str)
     return "cache_control" in testo
+
+
+def test_la_chiave_del_gateway_copre_anche_le_pagine(settings, stub):
+    """Console e quadro mostrano il traffico: sono cio' che la chiave protegge.
+
+    Quando sono state aggiunte, il middleware elencava solo `/v1` e `/admin`,
+    quindi con la chiave impostata restavano aperte a chiunque - e mostrano
+    modelli, costi e frammenti dei prompt. `/health` resta fuori apposta: dice
+    solo se il processo e' vivo.
+    """
+    import anthropic
+    import httpx2
+    from fastapi.testclient import TestClient
+
+    from ecotokens.server import create_app
+
+    settings.server.api_key = "segreta"
+    stub_app, _ = stub
+    app = create_app(settings)
+    app.state.gateway.client = anthropic.AsyncAnthropic(
+        api_key="test-key",
+        base_url="http://stub",
+        http_client=anthropic.DefaultAsyncHttpxClient(
+            transport=httpx2.ASGITransport(app=stub_app)
+        ),
+    )
+
+    with TestClient(app) as http:
+        for percorso in ("/", "/ui", "/quadro", "/admin/live", "/v1/models"):
+            assert http.get(percorso).status_code == 401, f"{percorso} aperto"
+            autorizzata = http.get(percorso, headers={"Authorization": "Bearer segreta"})
+            assert autorizzata.status_code == 200, f"{percorso} chiuso a chi ha la chiave"
+
+        assert http.get("/health").status_code == 200, "il controllo di vita resta pubblico"

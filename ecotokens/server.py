@@ -268,9 +268,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def check_api_key(request: Request, call_next):
-        """Chiave del gateway, se configurata. Non e' la chiave Anthropic."""
+        """Chiave del gateway, se configurata. Non e' la chiave Anthropic.
+
+        Copre anche le pagine, non solo le API. Quando sono state aggiunte
+        l'elenco diceva `/v1` e `/admin`, quindi console e quadro restavano
+        aperte a chiave impostata: mostrano modelli, costi e frammenti dei
+        prompt, cioe' esattamente il traffico che la chiave doveva proteggere.
+        `/health` resta fuori apposta, perche' serve a sapere se il processo e'
+        vivo e non dice niente di nessuno.
+        """
         expected = settings.server.api_key
-        if expected and request.url.path.startswith(("/v1", "/admin")):
+        protetto = request.url.path in {"/", "/ui", "/quadro"} or request.url.path.startswith(
+            ("/v1", "/admin")
+        )
+        if expected and protetto:
             header = request.headers.get("authorization", "")
             token = header[7:] if header.lower().startswith("bearer ") else header
             if token != expected:
