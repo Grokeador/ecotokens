@@ -112,7 +112,7 @@ Il dettaglio di ciascuna sta nel README, sezione «Trappole».
 
 `serve` `stats` `purge` · misure: `bench` `ablate` `optimize` `compaction`
 `prompt` `substitutions` `cachekey` `overhead` `pruning` `ritenzione` `memoria`
-`ceiling` `cachewrites` `dashboard`
+`ceiling` `cachewrites` · pagine: `quadro` (compatta) `dashboard` (estesa)
 
 Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
 devono mai richiedere rete.

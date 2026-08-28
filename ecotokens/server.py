@@ -307,6 +307,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return HTMLResponse(content=render_console())
 
+    @app.get("/quadro", response_class=HTMLResponse)
+    async def quadro(request: Request) -> HTMLResponse:
+        """Cruscotto compatto: tutti i parametri, nessuna misura eseguita.
+
+        Legge soltanto cio' che e' gia' registrato, quindi si apre subito. Una
+        pagina di controllo che si fa aspettare non viene guardata.
+        """
+        from .quadro import build_quadro_data, render_quadro
+
+        gateway = request.app.state.gateway
+        dati = await build_quadro_data(gateway.settings, gateway.store)
+        return HTMLResponse(content=render_quadro(dati))
+
     return app
 
 

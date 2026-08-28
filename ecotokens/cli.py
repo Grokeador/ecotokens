@@ -78,7 +78,11 @@ def serve(
     console.print("Nei client basta impostare questo indirizzo come base_url.")
     console.print(
         f"Console dal vivo: [cyan]http://{host}:{port}/[/] "
-        "[dim]- cosa fa ogni stadio, richiesta per richiesta[/]\n"
+        "[dim]- cosa fa ogni stadio, richiesta per richiesta[/]"
+    )
+    console.print(
+        f"Quadro:           [cyan]http://{host}:{port}/quadro[/] "
+        "[dim]- tutti i parametri su una schermata[/]\n"
     )
 
     from .server import create_app
@@ -470,7 +474,19 @@ def ritenzione(
         "necessaria e' arrivata fino al prompt? Se non c'e', nessun modello puo' "
         "rispondere.[/]\n"
     )
-    esiti = asyncio.run(misura_ritenzione(live=live))
+    settings = load_settings(None)
+
+    async def _misura():
+        esiti = await misura_ritenzione(live=live)
+        database = Database(settings.storage.path)
+        database.connect()
+        try:
+            await Store(database).save_retention(esiti)
+        finally:
+            database.close()
+        return esiti
+
+    esiti = asyncio.run(_misura())
 
     tabella = Table(title="Ritenzione: i fatti piantati sono ancora nel prompt?")
     tabella.add_column("Carico")
@@ -1058,6 +1074,25 @@ def pruning(
         "ne consumano sei volte piu' in fretta di una.[/]"
     )
 
+
+
+@app.command()
+def quadro(
+    config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
+    out: str = typer.Option("ecotokens-quadro.html", help="File HTML da generare"),
+) -> None:
+    """Cruscotto compatto con tutti i parametri gia' misurati."""
+    from .quadro import quadro_da_percorso, render_quadro
+
+    settings = load_settings(config)
+    dati = asyncio.run(quadro_da_percorso(settings))
+    percorso = Path(out)
+    percorso.write_text(render_quadro(dati), encoding="utf-8")
+    console.print(f"[green]Quadro scritto in[/] {percorso.resolve()}")
+    console.print(
+        "[dim]Non misura niente: legge cio' che e' gia' registrato. I riquadri "
+        "senza dati dicono quale comando li produce.[/]"
+    )
 
 
 @app.command()

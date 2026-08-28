@@ -793,6 +793,47 @@ class Store:
             [(now, fact_id) for fact_id in fact_ids],
         )
 
+    async def save_retention(self, esiti: list[Any]) -> None:
+        """Registra un giro di misura della ritenzione."""
+        adesso = _now()
+        await self.db.executemany(
+            """INSERT INTO retention_runs
+               (created_at, scenario, variant, kept, lost, prompt_tokens, summaries)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    adesso,
+                    voce.scenario,
+                    voce.variante,
+                    len(voce.sopravvissuti),
+                    len(voce.perduti),
+                    voce.prompt_tokens,
+                    voce.riassunti_nuovi,
+                )
+                for voce in esiti
+            ],
+        )
+
+    async def latest_retention(self) -> dict[str, Any]:
+        """L'ultimo giro registrato, o vuoto se non ne e' mai stato fatto uno.
+
+        Solo l'ultimo: mescolare due giri darebbe medie fra configurazioni
+        diverse, che e' il modo classico di ottenere un numero plausibile e
+        privo di significato.
+        """
+        ultimo = await self.db.query_one(
+            "SELECT MAX(created_at) AS quando FROM retention_runs"
+        )
+        quando = ultimo["quando"] if ultimo else None
+        if not quando:
+            return {}
+        righe = await self.db.query(
+            """SELECT scenario, variant, kept, lost, prompt_tokens, summaries
+               FROM retention_runs WHERE created_at = ? ORDER BY scenario, id""",
+            (quando,),
+        )
+        return {"created_at": quando, "rows": [dict(r) for r in righe]}
+
     async def stable_facts(self, session_id: str | None, limit: int) -> list[str]:
         """Tutti i fatti della sessione, in ordine fisso di inserimento.
 

@@ -13,6 +13,7 @@ ecotokens.toml
 # artefatti generati
 misure.db*
 ecotokens-dashboard.html
+ecotokens-quadro.html
 
 # Repository di sola documentazione, tenuto separato (vedi README).
 pubblicazione/

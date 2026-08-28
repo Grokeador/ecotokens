@@ -203,6 +203,25 @@ che si è più tentati di lasciar fuori. La console non esce mai in rete: nessun
 font remoto, nessun CDN — mostra il traffico dell'utente, e non ha motivo di
 segnalare a nessuno quando la si guarda.
 
+### Le tre pagine, e perché sono tre
+
+| | risponde a | quando |
+|---|---|---|
+| **`/quadro`** | tutti i parametri, com'è messo adesso | si tiene aperta |
+| **`/`** (console) | cosa sta succedendo al traffico vero | si guarda mentre gira |
+| **`/admin/dashboard`** | come si è arrivati a un numero | si legge una volta |
+
+Il **quadro** è un cruscotto: nessuna prosa, nove riquadri su una schermata
+sola, 10 KB contro i 100 della dashboard. Non misura niente — legge le misure
+già registrate, quindi si apre subito — e ogni riquadro porta la propria età,
+perché un cruscotto che mostra la misura di tre settimane fa senza dirlo è
+peggio di uno vuoto. Dove non c'è ancora una misura, scrive quale comando la
+produce invece di mostrare uno zero: uno zero è una misura, il vuoto no.
+
+```bash
+ecotokens quadro
+```
+
 Gli stessi dati in JSON su `/admin/live`, e a riga di comando:
 
 ```bash
@@ -1188,6 +1207,7 @@ poi la cache venga davvero letta.
 | `POST /v1/chat/completions` | compatibile OpenAI, streaming incluso |
 | `GET /v1/models` | catalogo dei modelli, con prezzi e finestra di contesto |
 | `GET /` (o `/ui`) | console dal vivo del traffico vero |
+| `GET /quadro` | cruscotto compatto, tutti i parametri su una schermata |
 | `GET /admin/live` | gli stessi dati in JSON, sola lettura |
 | `GET /admin/stats` | statistiche di consumo e risparmio |
 | `GET /admin/sessions` | sessioni riconosciute |

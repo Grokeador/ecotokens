@@ -664,3 +664,36 @@ def test_senza_ablazione_il_pannello_non_compare():
 
     assert _vs_automatico({}) == ""
     assert _vs_automatico({"vs_automatico": {"reference_usd": 0.0}}) == ""
+
+
+async def test_la_dashboard_servita_mostra_il_confronto_senza_rimisurare(tmp_path):
+    """Il pannello c'era solo nella pagina generata a mano, non in quella servita.
+
+    `/admin/dashboard` risponde con `measure=false`, perche' rifare il banco a
+    ogni apertura la renderebbe lenta - e in quel ramo il confronto col caching
+    automatico non veniva mai calcolato. Cioe' mancava proprio nella pagina che
+    la gente apre davvero. Ricostruito dall'ultima ablazione registrata.
+    """
+    from ecotokens.bench import ABLATION_STEPS, BASELINE_VARIANT, RIFERIMENTO_MODERNO
+
+    settings = Settings()
+    # Un file, non `:memory:`: ogni connessione in memoria e' un database a
+    # se', quindi cio' che scrive il test non lo vedrebbe chi legge dopo.
+    settings.storage.path = str(tmp_path / "misure.sqlite3")
+    database, store = open_results_store(settings.storage.path)
+    try:
+        corsa = BenchRun(id="a1", label="ablazione", mode="simulato", created_at=1.0)
+        costi = {BASELINE_VARIANT: 40.0, RIFERIMENTO_MODERNO: 10.0}
+        for nome, _ in ABLATION_STEPS[2:]:
+            costi[nome] = 5.0
+        corsa.measurements = [
+            Measurement(scenario="x", variant=variante, cost_usd=costo)
+            for variante, costo in costi.items()
+        ]
+        await save_run(store, corsa, corpus="ablazione v2")
+    finally:
+        database.close()
+
+    dati = await build_dashboard_data(settings, measure=False, project_root=PROGETTO)
+    assert dati["vs_automatico"]["reference_usd"] == 10.0
+    assert "Quanto aggiunge a chi usa" in render_dashboard(dati)

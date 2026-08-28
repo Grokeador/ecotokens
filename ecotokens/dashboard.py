@@ -257,7 +257,18 @@ async def build_dashboard_data(
 
             dati["progress"] = await stage_progress(store, dati["stages"])
 
-        dati["history"] = _summarise_history(await load_runs(store, limit=12))
+        corse = await load_runs(store, limit=60)
+        dati["history"] = _summarise_history(corse[:12])
+        if "vs_automatico" not in dati:
+            # Servita senza `?measure=true` - il caso normale, perche' rifare
+            # il banco a ogni apertura renderebbe la pagina lenta - il
+            # confronto col caching automatico va ricostruito dall'ultima
+            # ablazione registrata. Senza questo il pannello non compariva
+            # mai sulla pagina servita dal gateway, cioe' quella che la gente
+            # apre davvero: c'era solo nel file generato a mano.
+            from .quadro import ricostruisci_vs_automatico
+
+            dati["vs_automatico"] = ricostruisci_vs_automatico(corse)
         dati["live"] = await _live_traffic(store)
         dati["calibration"] = await store.estimate_calibration()
         dati["cache_writes_live"] = await store.cache_write_report()

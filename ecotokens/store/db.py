@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS bench_results (
 );
 CREATE INDEX IF NOT EXISTS idx_bench_results_run ON bench_results(run_id);
 
+-- Esiti di `ecotokens ritenzione`. Registrati perche' la misura dura mezzo
+-- minuto e il quadro deve aprirsi subito: una pagina di controllo che si fa
+-- aspettare non viene guardata, e una che non viene guardata non controlla.
+CREATE TABLE IF NOT EXISTS retention_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  REAL NOT NULL,
+    scenario    TEXT NOT NULL,
+    variant     TEXT NOT NULL,
+    kept        INTEGER NOT NULL DEFAULT 0,
+    lost        INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    summaries   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_retention_created ON retention_runs(created_at);
+
 CREATE TABLE IF NOT EXISTS cache_entries (
     key         TEXT PRIMARY KEY,
     model       TEXT NOT NULL,
