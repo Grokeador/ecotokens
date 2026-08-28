@@ -5,16 +5,29 @@ build-backend = "hatchling.build"
 [project]
 name = "ecotokens"
 version = "0.1.0"
-description = "Gateway locale OpenAI-compatibile per Claude, con economia di token"
+# Non "gateway OpenAI-compatibile": parla **solo** con Anthropic, e accetta il
+# dialetto OpenAI in ingresso perche' cosi' le applicazioni esistenti non si
+# riscrivono. Dirlo al contrario e' il malinteso che il progetto si e' imposto
+# di non propagare, e su PyPI questa riga e' la prima che si legge.
+description = "Gateway locale che riduce la spesa in token verso l'API Anthropic (Claude)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "EcoTokens contributors" }]
 keywords = ["llm", "claude", "anthropic", "gateway", "proxy", "prompt-caching"]
 classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Software Development :: Libraries",
+  "Topic :: Internet :: Proxy Servers",
+  "Typing :: Typed",
 ]
 dependencies = [
   # 1.x, non 0.x: l'SDK 1.0 gira su httpx2 e ha una superficie diversa.
@@ -53,10 +66,19 @@ dev = [
 ecotokens = "ecotokens.cli:main"
 
 [project.urls]
-# Homepage = "https://github.com/<utente>/ecotokens"  # da valorizzare alla pubblicazione
+# Da valorizzare al momento della pubblicazione: senza, la scheda su PyPI non
+# ha nessun collegamento e chi la trova non puo' arrivare al codice.
+# Homepage = "https://github.com/<utente>/ecotokens"
+# Issues = "https://github.com/<utente>/ecotokens/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ecotokens"]
+
+[tool.hatch.build.targets.sdist]
+# Nell'archivio dei sorgenti entrano anche i test e la configurazione di
+# esempio: chi lo scarica deve poter verificare da se' che i numeri del README
+# siano veri, che e' l'unica cosa che distingue questo progetto dagli altri.
+include = ["ecotokens", "tests", "README.md", "LICENSE", "ecotokens.example.toml", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

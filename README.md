@@ -176,6 +176,101 @@ copy ecotokens.example.toml ecotokens.toml
 Ogni valore si può sovrascrivere da ambiente con
 `ECOTOKENS_<SEZIONE>__<CAMPO>`, per esempio `ECOTOKENS_SERVER__PORT=9000`.
 
+## Metterlo in produzione
+
+### Costruire il pacchetto
+
+```bash
+pip install build && python -m build
+```
+
+Produce `dist/ecotokens-<versione>-py3-none-any.whl` e l'archivio dei sorgenti.
+La ruota è verificata: costruita, installata in un ambiente vuoto fuori dal
+repository, avviata, e le tre pagine rispondono. L'archivio dei sorgenti
+include i **test**, perché chi lo scarica deve poter rifare le misure del
+README invece di crederci.
+
+Non è pubblicato su PyPI: `pip install ecotokens` non funziona. Per pubblicarlo
+servono un account, un token e `twine upload dist/*` — passi che deve fare chi
+possiede il progetto, non questo README. Prima di farlo va valorizzata la
+sezione `[project.urls]` in `pyproject.toml`, altrimenti la scheda su PyPI non
+ha nessun collegamento al codice.
+
+### Esporre il gateway
+
+Il valore predefinito è `127.0.0.1`: raggiungibile solo dalla macchina. Su un
+indirizzo diverso il gateway **si rifiuta di partire** senza `server.api_key`:
+
+```
+Rifiuto di ascoltare su 0.0.0.0 senza una chiave del gateway.
+```
+
+Non è pignoleria. Quella porta inoltra all'API con la tua chiave Anthropic:
+non è un servizio che espone dei dati, è uno che espone una carta di credito.
+E console e quadro mostrano modelli, costi e frammenti dei prompt già passati.
+
+```toml
+[server]
+host = "0.0.0.0"
+api_key = "una-frase-lunga-a-caso"
+```
+
+I client la presentano in `Authorization: Bearer`. Resta da mettere **TLS**: il
+gateway parla HTTP e non ha intenzione di occuparsi di certificati, quindi
+davanti va un reverse proxy (nginx, Caddy, Traefik) che termini il TLS e
+inoltri su `127.0.0.1:8000`.
+
+### In un contenitore
+
+```bash
+docker compose up -d
+```
+
+> **Non verificato.** La macchina su cui `Dockerfile` e `docker-compose.yml`
+> sono stati scritti non ha Docker, quindi non sono mai stati costruiti né
+> eseguiti. I passi sono gli stessi dell'installazione da sorgente, che è
+> verificata, ma la traduzione in immagine è da provare. Il progetto non
+> dichiara funzionante ciò che non ha misurato, e questo vale anche per un
+> Dockerfile.
+
+Il compose vuole due variabili in un file `.env` accanto a sé — `.gitignore` lo
+esclude:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ECOTOKENS_SERVER__API_KEY=una-frase-lunga-a-caso
+```
+
+Tre scelte deliberate: il profilo è `prudente` e non quello predefinito, perché
+in un contenitore che qualcun altro accende un default che cambia le risposte
+va scelto e non subito; il tetto di spesa è acceso a 5 $/giorno; la porta esce
+solo su `127.0.0.1` dell'host, e per aprirla davvero servono la chiave e il TLS
+di cui sopra.
+
+### Come servizio, senza Docker
+
+Il gateway è un processo in primo piano: chiudendo il terminale si chiude. Su
+Windows la strada senza software aggiuntivo è l'Utilità di pianificazione, con
+un'attività «all'avvio del sistema» che esegue
+
+```
+C:\percorso\.venv\Scripts\ecotokens.exe serve
+```
+
+Con un'avvertenza che vale su qualunque sistema: **il percorso del database è
+relativo** (`ecotokens.db`), quindi il file nasce nella cartella di lavoro. In
+un servizio quella cartella è arbitraria, e i consumi finirebbero ogni volta in
+un posto diverso — cioè le pagine dei numeri sarebbero vuote senza che si
+capisca perché. Va fissato:
+
+```
+ECOTOKENS_STORAGE__PATH=C:\percorso\dati\ecotokens.db
+```
+
+Ogni campo si può sovrascrivere da ambiente: `ECOTOKENS_<SEZIONE>__<CAMPO>` per
+quelli dentro una sezione, `ECOTOKENS_<CAMPO>` per quelli di primo livello come
+`ECOTOKENS_PROFILO`.
+
 ## Vedere quanto si risparmia
 
 Con il gateway acceso, la console dal vivo sta sulla radice:

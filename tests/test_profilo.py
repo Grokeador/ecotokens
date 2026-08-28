@@ -302,3 +302,62 @@ def test_lo_stadio_dell_effort_si_chiama_come_si_comporta():
     assert "effort adattivo" in nomi(prudenti)
     assert "effort sempre basso" in nomi(aggressivi)
     assert "effort adattivo" not in nomi(aggressivi)
+
+
+# --- il profilo dall'ambiente ---------------------------------------------
+
+
+def test_il_profilo_si_puo_cambiare_da_variabile_d_ambiente(monkeypatch, tmp_path):
+    """Il doppio underscore era obbligatorio, quindi i campi di primo livello
+    non erano raggiungibili: `ECOTOKENS_PROFILO=prudente` veniva scartato in
+    silenzio e il gateway restava aggressivo.
+
+    Non e' un campo qualunque: decide se il modello viene declassato, cioe' se
+    le risposte cambiano. Ed e' l'unico modo di regolarlo dentro un
+    contenitore, dove un file di configurazione andrebbe montato. Un compose
+    che lo imposta senza ottenere niente e' peggio di uno che non lo imposta:
+    chi lo legge crede di aver scelto.
+    """
+    from ecotokens.config import load_settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECOTOKENS_PROFILO", "prudente")
+    prudente = load_settings(None)
+    assert prudente.profilo == "prudente"
+    assert prudente.router.model_downgrade is False
+
+    monkeypatch.setenv("ECOTOKENS_PROFILO", "aggressivo")
+    aggressivo = load_settings(None)
+    assert aggressivo.profilo == "aggressivo"
+    assert aggressivo.router.model_downgrade is True
+
+
+def test_una_variabile_non_puo_sostituire_una_sezione_intera(monkeypatch, tmp_path):
+    """`ECOTOKENS_ROUTER=qualcosa` non significa niente, e accettarlo
+    metterebbe una stringa dove il modello si aspetta una sezione."""
+    from ecotokens.config import load_settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECOTOKENS_ROUTER", "qualcosa")
+    settings = load_settings(None)
+    assert settings.router.enabled in (True, False), "la sezione e' intatta"
+
+
+def test_la_variabile_del_file_di_configurazione_non_e_un_campo(monkeypatch, tmp_path):
+    """`ECOTOKENS_CONFIG` indica quale file leggere: non deve finire nei dati."""
+    from ecotokens.config import load_settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECOTOKENS_CONFIG", str(tmp_path / "inesistente.toml"))
+    load_settings(None)  # non deve sollevare
+
+
+def test_le_sezioni_restano_raggiungibili_col_doppio_underscore(monkeypatch, tmp_path):
+    from ecotokens.config import load_settings
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ECOTOKENS_SERVER__PORT", "9123")
+    monkeypatch.setenv("ECOTOKENS_BUDGET__ENABLED", "true")
+    settings = load_settings(None)
+    assert settings.server.port == 9123
+    assert settings.budget.enabled is True

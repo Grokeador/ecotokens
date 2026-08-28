@@ -10,6 +10,7 @@ import anthropic
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from . import __version__
 from .api.schemas import ChatCompletionRequest, error_payload
 from .config import Settings, load_settings
 from .pipeline.base import FORMAT_ANTHROPIC, Pipeline, RequestContext
@@ -261,7 +262,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="EcoTokens",
         description="Gateway locale OpenAI-compatibile per Claude, con economia di token",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
     app.state.gateway = gateway
@@ -306,7 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": __version__}
 
     # La console sta sulla radice, non sotto /admin: e' la pagina che si apre
     # dopo `ecotokens serve`, e un indirizzo che si ricorda vale quanto una

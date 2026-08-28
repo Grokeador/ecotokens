@@ -20,6 +20,50 @@ app = typer.Typer(add_completion=False, help="Gateway locale per Claude con econ
 console = Console()
 
 
+# Indirizzi che restano sulla macchina. Tutto il resto e' raggiungibile da
+# qualcun altro, e cambia cosa vuol dire lasciare il gateway senza chiave.
+INDIRIZZI_LOCALI = {"127.0.0.1", "::1", "localhost"}
+
+
+def esigi_chiave_se_esposto(host: str, api_key: str | None) -> None:
+    """Non si apre il gateway al mondo senza una chiave.
+
+    Il valore predefinito e' 127.0.0.1 e va benissimo. Chi scrive `0.0.0.0`
+    quasi sempre vuole raggiungerlo da un'altra macchina, e quasi mai ha
+    pensato che nello stesso momento lo raggiunge chiunque altro sulla rete:
+    la porta inoltra all'API con **la chiave Anthropic dell'utente**, quindi
+    non e' un servizio che espone dei dati, e' uno che espone una carta di
+    credito. In piu' la console e il quadro mostrano modelli, costi e frammenti
+    dei prompt gia' passati.
+
+    Fermarsi e' l'unica risposta onesta: un avviso in mezzo ai log di avvio non
+    lo legge nessuno, e il costo di sbagliare qui non e' simmetrico.
+    """
+    if host in INDIRIZZI_LOCALI or api_key:
+        return
+
+    console.print(f"[red]Rifiuto di ascoltare su {host} senza una chiave del gateway.[/]")
+    console.print(
+        "Quell'indirizzo e' raggiungibile da altre macchine, e questa porta "
+        "inoltra all'API con la tua chiave Anthropic: chi la trova spende a tuo "
+        "nome. Console e quadro mostrerebbero inoltre i prompt gia' passati."
+    )
+    console.print()
+    console.print("Nel file di configurazione:")
+    # Le parentesi quadre sono la sintassi di Rich: senza escape "[server]"
+    # viene letto come un tag di stile e sparisce dalla riga, lasciando un
+    # esempio di configurazione a cui manca proprio l'intestazione.
+    console.print(r"  [cyan]\[server][/]")
+    console.print('  [cyan]api_key = "una-frase-lunga-a-caso"[/]')
+    console.print()
+    console.print(
+        "[dim]E' la chiave del gateway, non quella di Anthropic: i client la "
+        "presentano in Authorization: Bearer. Per esporlo davvero servono anche "
+        "TLS e un proxy davanti - vedi il README, sezione Esporre il gateway.[/]"
+    )
+    raise typer.Exit(code=2)
+
+
 def esigi_credenziali() -> None:
     """Ferma un comando --live prima che spenda, se non c'e' come autenticarsi.
 
@@ -67,6 +111,7 @@ def serve(
     settings = load_settings(config)
     host = host or settings.server.host
     port = port or settings.server.port
+    esigi_chiave_se_esposto(host, settings.server.api_key)
 
     logging.basicConfig(
         level=settings.server.log_level.upper(),

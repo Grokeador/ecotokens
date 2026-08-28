@@ -32,6 +32,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from . import __version__
+
 # --- raccolta -------------------------------------------------------------
 
 
@@ -56,6 +58,7 @@ async def build_console_data(gateway: Any) -> dict[str, Any]:
 
     dati: dict[str, Any] = {
         "generated_at": time.time(),
+        "version": __version__,
         "requests": richieste,
         "totals": {
             "cost_usd": costo,
@@ -797,7 +800,8 @@ _JS = r"""
       ].join("");
     }
     document.getElementById("orario").textContent =
-      "ultimo aggiornamento " + new Date(d.generated_at * 1000).toLocaleString("it-IT");
+      "EcoTokens v" + (d.version || "?") + " · ultimo aggiornamento " +
+      new Date(d.generated_at * 1000).toLocaleString("it-IT");
   }
 
   function errore(messaggio) {

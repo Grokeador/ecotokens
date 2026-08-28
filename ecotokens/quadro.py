@@ -29,6 +29,7 @@ import html
 import time
 from typing import Any
 
+from . import __version__
 from .config import Settings
 from .store.db import Database
 from .store.repos import Store
@@ -536,6 +537,7 @@ def render_quadro(d: dict[str, Any]) -> str:
     <h1>Quadro <span class="sub">non misura niente: legge, e ogni riquadro porta la propria et&agrave;</span></h1>
     <nav><a href="/">console dal vivo</a> &middot;
     <a href="/admin/dashboard">rapporto esteso</a> &middot;
+    <span class="mono">v{_esc(__version__)}</span> &middot;
     <span class="mono">{_esc(quando)}</span></nav>
   </header>
   <main class="grid">

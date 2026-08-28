@@ -1,0 +1,21 @@
+# Cio' che non deve entrare nell'immagine, e le prime due righe sono le sole
+# che contano davvero: il database contiene i prompt gia' passati, e un file
+# di configurazione puo' contenere una chiave.
+*.db
+*.db-wal
+*.db-shm
+ecotokens.toml
+.env
+
+.git
+.venv
+dist
+build
+__pycache__
+*.pyc
+.pytest_cache
+htmlcov
+.coverage
+ecotokens-dashboard.html
+ecotokens-quadro.html
+pubblicazione

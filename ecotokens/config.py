@@ -501,16 +501,41 @@ def _find_config(explicit: str | Path | None) -> Path | None:
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
-    """Applica le variabili ECOTOKENS_<SEZIONE>__<CAMPO>."""
+    """Applica ECOTOKENS_<SEZIONE>__<CAMPO> e ECOTOKENS_<CAMPO>.
+
+    La seconda forma esisteva solo nella documentazione. Il doppio underscore
+    era obbligatorio, quindi i campi di primo livello - `profilo` sopra tutti -
+    non erano raggiungibili dall'ambiente: `ECOTOKENS_PROFILO=prudente` veniva
+    scartato in silenzio e il gateway restava aggressivo.
+
+    Non e' un campo qualunque. E' quello che decide se il modello viene
+    declassato, cioe' se le risposte cambiano, ed e' l'unico modo di regolarlo
+    dentro un contenitore, dove un file di configurazione andrebbe montato. Un
+    `docker-compose.yml` che lo imposta e non ottiene niente e' peggio di uno
+    che non lo imposta: chi lo legge crede di aver scelto.
+    """
     for raw_key, value in os.environ.items():
-        if not raw_key.startswith("ECOTOKENS_") or "__" not in raw_key:
+        if not raw_key.startswith("ECOTOKENS_"):
             continue
         remainder = raw_key[len("ECOTOKENS_") :]
-        section, _, field = remainder.partition("__")
-        section, field = section.lower(), field.lower()
-        if section not in Settings.model_fields:
+        if "__" in remainder:
+            section, _, field = remainder.partition("__")
+            section, field = section.lower(), field.lower()
+            if section in Settings.model_fields:
+                data.setdefault(section, {})[field] = value
             continue
-        data.setdefault(section, {})[field] = value
+
+        campo = remainder.lower()
+        # Solo i campi che non sono sezioni: `ECOTOKENS_ROUTER=...` non
+        # significa niente, e accettarlo sostituirebbe un'intera sezione con
+        # una stringa. Anche `ECOTOKENS_CONFIG`, che indica il file da leggere
+        # e non e' un campo, resta fuori da se'.
+        if campo in Settings.model_fields and not isinstance(
+            data.get(campo), dict
+        ):
+            annotazione = Settings.model_fields[campo].annotation
+            if not (isinstance(annotazione, type) and issubclass(annotazione, BaseModel)):
+                data[campo] = value
     return data
 
 

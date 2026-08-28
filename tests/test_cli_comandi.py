@@ -62,3 +62,77 @@ def _impostazioni(tmp_path):
     settings = Settings()
     settings.storage.path = str(tmp_path / "misure.db")
     return settings
+
+
+# --- non si espone il gateway senza chiave --------------------------------
+
+
+def test_su_localhost_parte_senza_chiave():
+    """Il caso normale: la porta resta sulla macchina, non serve niente."""
+    from ecotokens.cli import esigi_chiave_se_esposto
+
+    for host in ("127.0.0.1", "localhost", "::1"):
+        esigi_chiave_se_esposto(host, None)  # non deve sollevare
+
+
+def test_un_indirizzo_raggiungibile_senza_chiave_ferma_l_avvio():
+    """Non e' un servizio che espone dei dati: e' uno che espone una carta.
+
+    La porta inoltra all'API con la chiave Anthropic dell'utente, quindi chi la
+    trova spende a suo nome. Un avviso fra i log di avvio non lo legge nessuno,
+    e il costo di sbagliare qui non e' simmetrico: si rifiuta di partire.
+    """
+    import typer
+
+    from ecotokens.cli import esigi_chiave_se_esposto
+
+    for host in ("0.0.0.0", "192.168.1.10"):
+        with pytest.raises(typer.Exit) as uscita:
+            esigi_chiave_se_esposto(host, None)
+        assert uscita.value.exit_code == 2, host
+
+
+def test_con_la_chiave_si_puo_esporre():
+    """Il divieto e' sulla combinazione, non sull'indirizzo: chi ha messo una
+    chiave ha fatto la scelta consapevolmente."""
+    from ecotokens.cli import esigi_chiave_se_esposto
+
+    esigi_chiave_se_esposto("0.0.0.0", "una-chiave")  # non deve sollevare
+
+
+# --- la versione, in un posto solo ----------------------------------------
+
+
+def test_la_versione_e_una_sola():
+    """Era scritta a mano in tre punti: il pacchetto, il titolo dell'app e
+    `/health`. Tre copie di un numero sono tre occasioni perche' due diventino
+    vecchie senza che nessuno se ne accorga, e chi legge `/health` avrebbe
+    visto una versione che il pacchetto non aveva piu'.
+    """
+    import tomllib
+    from pathlib import Path as P
+
+    from ecotokens import __version__
+
+    dichiarata = tomllib.loads(P("pyproject.toml").read_text(encoding="utf-8"))
+    assert __version__ == dichiarata["project"]["version"]
+
+    sorgente = P("ecotokens/server.py").read_text(encoding="utf-8")
+    assert '"0.1.0"' not in sorgente, "versione ricomparsa a mano nel server"
+
+
+def test_health_riporta_la_versione_del_pacchetto(client):
+    from ecotokens import __version__
+
+    assert client.get("/health").json()["version"] == __version__
+
+
+def test_il_changelog_documenta_la_versione_corrente():
+    """Una versione senza una riga nel registro e' una versione che nessuno sa
+    cosa contenga."""
+    from pathlib import Path as P
+
+    from ecotokens import __version__
+
+    changelog = P("CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"[{__version__}]" in changelog

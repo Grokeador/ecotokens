@@ -1,0 +1,43 @@
+# NON VERIFICATO: scritto senza Docker disponibile, vedi la nota nel Dockerfile.
+#
+#     docker compose up -d
+#
+# Le due variabili obbligatorie stanno in un file `.env` accanto a questo, che
+# il .gitignore esclude:
+#
+#     ANTHROPIC_API_KEY=sk-ant-...
+#     ECOTOKENS_SERVER__API_KEY=una-frase-lunga-a-caso
+
+services:
+  ecotokens:
+    build: .
+    image: ecotokens
+    restart: unless-stopped
+    ports:
+      # Legato a 127.0.0.1 dell'host: il contenitore ascolta su 0.0.0.0 perche'
+      # non ha alternative, ma la porta esce solo sulla macchina. Per aprirla
+      # davvero si toglie il prefisso, e a quel punto servono la chiave del
+      # gateway (che il gateway pretende da se') e TLS davanti.
+      - "127.0.0.1:8000:8000"
+    environment:
+      # La chiave Anthropic non sta nell'immagine ne' in questo file: arriva
+      # dall'ambiente. Scriverla qui significherebbe versionarla.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?serve la chiave Anthropic}
+      # La chiave del gateway. Dentro il contenitore l'ascolto e' su 0.0.0.0,
+      # quindi senza questa il processo si rifiuta di partire - e ha ragione.
+      ECOTOKENS_SERVER__API_KEY: ${ECOTOKENS_SERVER__API_KEY:?serve la chiave del gateway}
+      # Il profilo. `aggressivo` e' il predefinito e cambia modello ed effort:
+      # parte del risparmio e' un'altra risposta, non la stessa pagata meno.
+      # Qui e' `prudente` di proposito - in un contenitore che qualcun altro
+      # accende, un default che cambia le risposte va scelto, non subito.
+      ECOTOKENS_PROFILO: ${ECOTOKENS_PROFILO:-prudente}
+      # Il tetto di spesa: l'unica funzione che protegge dal conto.
+      ECOTOKENS_BUDGET__ENABLED: "true"
+      ECOTOKENS_BUDGET__DAILY_USD: ${ECOTOKENS_BUDGET__DAILY_USD:-5.0}
+    volumes:
+      # I consumi sopravvivono al contenitore. Senza, ogni riavvio azzera la
+      # console e il quadro, e il gateway smette di sapere quanto ha speso.
+      - ecotokens-dati:/dati
+
+volumes:
+  ecotokens-dati:
