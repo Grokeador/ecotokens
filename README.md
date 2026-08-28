@@ -36,12 +36,74 @@ client.chat.completions.create(
 Licenza MIT, tutto self-hosted, nessun servizio a pagamento oltre all'API
 Anthropic che useresti comunque.
 
+## Serve al tuo caso?
+
+Vale la pena rispondere prima di tutto il resto, perché per una parte di chi
+arriva qui la risposta è no, ed è meglio saperlo in trenta secondi che dopo
+un'installazione.
+
+Due domande decidono.
+
+**Paghi a token, o paghi un abbonamento?** Il gateway riduce token. Token che
+non ti vengono fatturati singolarmente non hanno un prezzo da abbassare: se usi
+Claude Code o un altro client con un abbonamento a quota fissa, non c'è niente
+da risparmiare.
+
+**Molte richieste che condividono un prefisso, o una conversazione sola che
+cresce?** È la domanda che separa il 6% dall'82%. Dove molte richieste diverse
+stanno sopra lo stesso prompt di sistema, il gateway crea una voce di cache che
+tutte rileggono. Dove c'è una sola conversazione lunga, il caching automatico
+di Anthropic fa già quasi tutto da solo.
+
+### Quanto aggiunge a chi usa già il caching automatico
+
+Questo è il confronto onesto, ed è quello che il progetto misura. Anthropic
+offre il **prompt caching automatico**: basta un `cache_control` in cima alla
+richiesta e lo ottiene chiunque, gratis. Confrontarsi con «nessuna cache»
+descriveva il mondo di prima e gonfia il merito del gateway.
+
+| Carico | Con sola cache automatica | Dietro EcoTokens | In meno |
+|---|---:|---:|---:|
+| domande distinte, stesso prompt di sistema | $0,2776 | $0,0509 | **81,7%** |
+| conversazione con system grande e stabile | $0,1999 | $0,1283 | **35,8%** |
+| file letti e riscritti | $1,4874 | $1,2504 | 15,9% |
+| ciclo agentico con tool | $0,3191 | $0,2929 | 8,2% |
+| prompt scritti in modo prolisso | $0,1851 | $0,1731 | 6,5% |
+| **totale** | **$2,4691** | **$1,8956** | **23,2%** |
+
+Senza cambiare nessuna risposta. Il numero lo stampa `ecotokens ablate`: non è
+un'asserzione di questo README, è una misura che puoi rifare.
+
+Accendendo anche ciò che cambia il contenuto — declassamento del modello ed
+effort minimo — si arriva all'**85,2%**. Ma quella è un'altra risposta a un
+prezzo diverso: il banco misura quanto è *lunga* una risposta, non se è
+*giusta*. Vedi [I due profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione).
+
+### Le cose che non sono percentuali
+
+Spesso pesano più del risparmio, e non le hai se non metti qualcosa in mezzo.
+
+- **Un tetto di spesa** che blocca la richiesta *prima* che raggiunga l'API,
+  con preventivo `count_tokens`. Non è un'ottimizzazione: è l'unica funzione
+  del progetto il cui scopo è impedire.
+- **Sapere dove finiscono i soldi**: la console dal vivo dice, stadio per
+  stadio e richiesta per richiesta, cosa è stato fatto e quanto è costato.
+- **Un punto solo per più applicazioni**: cache e tetto condivisi. È anche da
+  qui che nasce il guadagno più grande, perché prefissi condivisi fra
+  applicazioni diverse nessuna di esse può sfruttarli da sola.
+- **Zero righe di codice**: si cambia `base_url`.
+
 ## Cosa fa davvero
 
 Il gateway non si limita a inoltrare le richieste: le riscrive prima di
 mandarle. Le percentuali qui sotto non sono stime: vengono dal banco di
 misura incluso nel progetto, che esegue lo stesso carico con e senza gli
 stadi di ottimizzazione (vedi [Misurare, invece di credere](#misurare-invece-di-credere)).
+
+Attenzione a come si leggono: sono quote del risparmio **contro nessuna
+cache**, che è il riferimento con cui si attribuisce il merito a ogni stadio,
+non quello con cui si decide se installare il gateway. Per quello vale la
+tabella [qui sopra](#quanto-aggiunge-a-chi-usa-già-il-caching-automatico).
 
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
@@ -55,11 +117,9 @@ stadi di ottimizzazione (vedi [Misurare, invece di credere](#misurare-invece-di-
 | **Embedder proprio** | la cache semantica accetta qualunque oggetto con `embed(testi)`: chi ne ha già uno non deve installarne un secondo | — |
 | **Declassamento di modello** *(acceso nel profilo predefinito)* | 17,5%, più di tutti gli altri stadi tranne il caching | **cambia la risposta**, e azzera la cache — [vedi sotto](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione) |
 
-Il gateway esce sul profilo **aggressivo**, che cambia modello ed effort: una
-parte del risparmio non è la stessa risposta pagata meno, è un'altra risposta a
-un prezzo diverso. Con `profilo = "prudente"` il contenuto non viene mai
-toccato e il risparmio scende dal 95,3% al 75,2%. La distinzione è sviluppata
-in [I due profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione);
+Il gateway esce sul profilo **aggressivo**, che cambia modello ed effort. Con
+`profilo = "prudente"` il contenuto non viene mai toccato. La distinzione è
+sviluppata in [I due profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione);
 la cache semantica resta spenta in entrambi.
 
 ## Tre vincoli che spiegano il progetto
@@ -191,10 +251,18 @@ repository:
 | costruzione di EcoTokens | $5,2262 | $0,2048 | **96%** | 82% |
 | **totale** | **$6,9987** | **$0,3294** | **95%** | 79% |
 
-Sono i numeri del profilo **aggressivo**, quello predefinito. Con il profilo
-`prudente` — che non tocca mai il contenuto di una risposta — il totale è
-**75,2%**. La differenza e cosa la produce stanno nella sezione [I due
+Sono i numeri del profilo **aggressivo**, quello predefinito, misurati contro
+una baseline **senza alcuna cache**. Con il profilo `prudente` — che non tocca
+mai il contenuto di una risposta — il totale è **75,2%**. La differenza e cosa
+la produce stanno nella sezione [I due
 profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione).
+
+Quella baseline serve ad attribuire il merito a ogni singolo stadio, ed è
+l'unica che lo permetta: accendendoli uno alla volta si vede quanto vale
+ciascuno. Non è però il punto di partenza di nessuno, perché il caching
+automatico oggi è gratis. Chi sta decidendo se installare il gateway guardi
+[Serve al tuo caso?](#serve-al-tuo-caso) — stessa misura, riferimento diverso,
+numeri molto più piccoli e molto più onesti.
 
 Lo scenario `costruzione` non è inventato: legge i sorgenti veri del progetto e
 ricostruisce il traffico che un agente di codice produce scrivendolo.
@@ -210,13 +278,15 @@ ricostruisce il traffico che un agente di codice produce scrivendolo.
 
 ## I due profili, e cosa distingue davvero un'ottimizzazione
 
-Il gateway esce configurato sul profilo **aggressivo**, che risparmia il 95,3%.
-Prima di lasciarlo così vale la pena sapere cosa lo separa dall'altro, perché
-non è una differenza di grado.
+Il gateway esce configurato sul profilo **aggressivo**, che risparmia il 95,3%
+contro nessuna cache — l'85,2% contro un'applicazione che usa già il caching
+automatico. Prima di lasciarlo così vale la pena sapere cosa lo separa
+dall'altro, perché non è una differenza di grado.
 
 | | `prudente` | `aggressivo` *(predefinito)* |
 |---|---|---|
-| Risparmio misurato | 75,2% | **95,3%** |
+| Risparmio contro nessuna cache | 75,2% | **95,3%** |
+| Risparmio contro il caching automatico | 23,2% | **85,2%** |
 | Modello | quello chiesto dal client | il più economico, fissato a inizio sessione |
 | Effort | abbassato dove il router giudica sicuro | sempre al minimo |
 | Contenuto delle risposte | mai toccato | **cambia** |

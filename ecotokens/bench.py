@@ -101,10 +101,19 @@ class BenchRun:
     measurements: list[Measurement] = field(default_factory=list)
     comparisons: list[Comparison] = field(default_factory=list)
 
-    def totals(self, variant: str) -> Measurement:
-        aggregato = Measurement(scenario="tutti", variant=variant)
+    def totals(self, variant: str, *, scenario: str | None = None) -> Measurement:
+        """Somma delle misure di una variante, o di un suo solo scenario.
+
+        Il filtro per scenario serve a non perdere la forbice: l'aggregato di
+        cinque carichi diversi nasconde che su uno il guadagno e' dell'82% e su
+        un altro del 6%, che e' l'informazione con cui si decide se il gateway
+        serve al proprio caso.
+        """
+        aggregato = Measurement(scenario=scenario or "tutti", variant=variant)
         for misura in self.measurements:
             if misura.variant != variant:
+                continue
+            if scenario is not None and misura.scenario != scenario:
                 continue
             aggregato.requests += misura.requests
             aggregato.upstream_calls += misura.upstream_calls
@@ -223,6 +232,18 @@ def _abilita_modello_economico(settings: Settings) -> None:
 
 # Gradini cumulativi dell'ablazione: la differenza fra due gradini consecutivi
 # e' il contributo dello stadio appena acceso.
+# Il gradino che rappresenta "l'applicazione che si sarebbe scritta comunque":
+# un `cache_control` in cima alla richiesta, che Anthropic offre a chiunque. E'
+# il riferimento onesto per la domanda che si fa chi valuta se installare il
+# gateway - non "quanto risparmio contro nessuna cache", che nel frattempo e'
+# diventata una domanda senza destinatari.
+RIFERIMENTO_MODERNO = "+ caching automatico"
+
+# L'ultimo gradino che non tocca il contenuto delle risposte. Dichiarato qui e
+# non dedotto dalla posizione: la scala cambia, e un indice numerico si
+# scollerebbe in silenzio dal significato.
+ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA = "+ riscrittura prompt"
+
 ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
     (BASELINE_VARIANT, None),
     # Il gradino che il resto della scala deve scavalcare per contare qualcosa.
@@ -398,6 +419,65 @@ def stage_contributions(run: BenchRun) -> list[dict[str, Any]]:
         )
         precedente = corrente
     return contributi
+
+
+def guadagno_sul_caching_automatico(run: BenchRun) -> dict[str, Any]:
+    """Quanto aggiunge il gateway a chi usa **gia'** il caching automatico.
+
+    E' la domanda che si fa chi sta decidendo se installarlo, ed e' diversa da
+    quella a cui risponde il totale dell'ablazione. Il totale confronta con
+    "nessuna cache": un riferimento che descriveva il mondo di prima, quando
+    ottenere il prompt caching richiedeva lavoro. Oggi basta un campo, quindi
+    quel confronto attribuisce al gateway un merito che non e' suo e prepara
+    una delusione a chi legge la percentuale e installa.
+
+    Le due cifre restituite vanno lette insieme e mai una sola:
+
+    * ``senza_cambiare_la_risposta`` - il guadagno che si ottiene lasciando
+      intatto il contenuto. E' l'unico numero che si possa promettere;
+    * ``cambiando_la_risposta`` - dove si arriva accendendo declassamento di
+      modello ed effort minimo. Il banco misura quanto e' **lunga** una
+      risposta, non se e' **giusta**: quella differenza e' interamente
+      misurata e il suo costo interamente no.
+
+    Per scenario, perche' l'aggregato nasconde una forbice che e' l'informazione
+    piu' utile del progetto: dove molte richieste condividono un prefisso il
+    guadagno e' grande, su una conversazione sola che cresce e' piccolo, perche'
+    li' il caching automatico fa gia' quasi tutto da solo.
+    """
+    riferimento = run.totals(RIFERIMENTO_MODERNO).cost_usd
+    prudente = run.totals(ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA).cost_usd
+    completo = run.totals(ABLATION_STEPS[-1][0]).cost_usd
+
+    def quota(prima: float, dopo: float) -> float:
+        return (prima - dopo) / prima if prima else 0.0
+
+    per_scenario = []
+    for scenario in sorted({m.scenario for m in run.measurements}):
+        base = run.totals(RIFERIMENTO_MODERNO, scenario=scenario).cost_usd
+        dopo = run.totals(ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA, scenario=scenario).cost_usd
+        per_scenario.append(
+            {
+                "scenario": scenario,
+                "reference_usd": base,
+                "cost_usd": dopo,
+                "saved_ratio": quota(base, dopo),
+            }
+        )
+    per_scenario.sort(key=lambda voce: -voce["saved_ratio"])
+
+    return {
+        "reference_usd": riferimento,
+        "senza_cambiare_la_risposta": {
+            "cost_usd": prudente,
+            "saved_ratio": quota(riferimento, prudente),
+        },
+        "cambiando_la_risposta": {
+            "cost_usd": completo,
+            "saved_ratio": quota(riferimento, completo),
+        },
+        "by_scenario": per_scenario,
+    }
 
 
 # --- persistenza ----------------------------------------------------------

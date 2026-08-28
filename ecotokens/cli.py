@@ -378,6 +378,7 @@ def ablate(
     from .bench import (
         BASELINE_VARIANT,
         CORPUS_VERSION,
+        guadagno_sul_caching_automatico,
         open_results_store,
         run_ablation,
         save_run,
@@ -413,6 +414,44 @@ def ablate(
             f"{voce['cumulative_ratio'] * 100:.1f}%",
         )
     console.print(tabella)
+
+    # La scala qui sopra parte da "nessuna cache", che non e' piu' il punto di
+    # partenza di nessuno: il caching automatico e' gratis. Chi sta valutando
+    # se installare il gateway ha bisogno dell'altra domanda, e va risposta
+    # senza costringerlo a fare la sottrazione da solo.
+    guadagno = guadagno_sul_caching_automatico(run)
+    confronto = Table(
+        title=(
+            "Quanto aggiunge a chi usa gia' il caching automatico "
+            f"(riferimento ${guadagno['reference_usd']:.4f})"
+        )
+    )
+    confronto.add_column("Carico")
+    confronto.add_column("Con sola cache", justify="right")
+    confronto.add_column("Dietro EcoTokens", justify="right")
+    confronto.add_column("In meno", justify="right")
+    for voce in guadagno["by_scenario"]:
+        confronto.add_row(
+            voce["scenario"],
+            f"${voce['reference_usd']:.4f}",
+            f"${voce['cost_usd']:.4f}",
+            f"[green]{voce['saved_ratio'] * 100:.1f}%[/]",
+        )
+    senza = guadagno["senza_cambiare_la_risposta"]
+    confronto.add_row(
+        "[bold]totale[/]",
+        f"[bold]${guadagno['reference_usd']:.4f}[/]",
+        f"[bold]${senza['cost_usd']:.4f}[/]",
+        f"[bold green]{senza['saved_ratio'] * 100:.1f}%[/]",
+    )
+    console.print(confronto)
+    cambiando = guadagno["cambiando_la_risposta"]
+    console.print(
+        f"[dim]Senza toccare il contenuto delle risposte. Accendendo declassamento "
+        f"ed effort minimo si arriva a {cambiando['saved_ratio'] * 100:.1f}%, ma "
+        "quella e' un'altra risposta a un prezzo diverso: il banco misura quanto "
+        "e' lunga, non se e' giusta.[/]"
+    )
 
 
 @app.command()

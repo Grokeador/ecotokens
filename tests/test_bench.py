@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from ecotokens.bench import (
+    guadagno_sul_caching_automatico,
     ABLATION_STEPS,
     BASELINE_VARIANT,
     FULL_VARIANT,
@@ -541,3 +542,125 @@ async def test_i_progressi_segnalano_un_confronto_fra_corpus_diversi():
         assert progresso["comparable"] is True
     finally:
         database.close()
+
+# --- il numero che serve a chi deve decidere se installarlo ---------------
+
+
+def _corsa_finta() -> "BenchRun":
+    """Una scala di ablazione con numeri scelti a mano, per fare l'aritmetica.
+
+    Due scenari con comportamenti opposti: uno che guadagna molto dal gateway
+    e uno che non guadagna quasi niente. E' il caso che conta, perche' e' la
+    forbice - non la media - a dire a un utente se il progetto serve a lui.
+    """
+    from ecotokens.bench import BenchRun, Measurement
+
+    run = BenchRun(id="x", label="prova", mode="simulato", created_at=1.0)
+    misure = []
+    # ripetitivo: da 10 a 2 (80% in meno). singolo: da 10 a 9 (10% in meno).
+    costi = {
+        "senza-gateway": (40.0, 40.0),
+        "+ caching automatico": (10.0, 10.0),
+        "+ pianificatore EcoTokens": (8.0, 9.5),
+        "+ potatura contesto": (6.0, 9.5),
+        "+ cache esatta": (3.0, 9.0),
+        "+ effort adattivo": (2.5, 9.0),
+        "+ riscrittura prompt": (2.0, 9.0),
+        "+ effort sempre basso": (1.5, 8.0),
+        "+ modello economico": (0.5, 3.0),
+    }
+    for variante, (ripetitivo, singolo) in costi.items():
+        misure.append(Measurement(scenario="ripetitivo", variant=variante, cost_usd=ripetitivo))
+        misure.append(Measurement(scenario="singolo", variant=variante, cost_usd=singolo))
+    run.measurements = misure
+    return run
+
+
+def test_il_guadagno_si_misura_contro_il_caching_automatico_non_contro_il_nulla():
+    """Il riferimento del totale dell'ablazione non e' il punto di partenza di nessuno.
+
+    "Senza gateway" vuol dire senza cache, e ottenere la cache oggi costa una
+    riga: Anthropic la offre a chiunque. Confrontarsi con quel nulla attribuisce
+    al gateway un merito che non e' suo, e prepara una delusione a chi legge la
+    percentuale e installa.
+    """
+    guadagno = guadagno_sul_caching_automatico(_corsa_finta())
+
+    # Riferimento: 10 + 10, non 40 + 40.
+    assert guadagno["reference_usd"] == 20.0
+    # Senza toccare le risposte: 2 + 9 = 11, cioe' il 45% in meno di 20.
+    senza = guadagno["senza_cambiare_la_risposta"]
+    assert senza["cost_usd"] == 11.0
+    assert senza["saved_ratio"] == pytest.approx(0.45)
+    # Accendendo cio' che cambia il contenuto: 0,5 + 3 = 3,5.
+    assert guadagno["cambiando_la_risposta"]["cost_usd"] == 3.5
+    assert guadagno["cambiando_la_risposta"]["saved_ratio"] == pytest.approx(0.825)
+
+
+def test_la_forbice_fra_i_carichi_resta_visibile():
+    """E' l'informazione piu' utile del progetto, e la media la cancella.
+
+    Un utente non ha "il carico medio": ne ha uno solo. Sapere che si va dal
+    10% all'80% a seconda della forma del traffico gli dice se il gateway serve
+    al suo caso; sapere che la media e' 45% non gli dice niente.
+    """
+    per_scenario = guadagno_sul_caching_automatico(_corsa_finta())["by_scenario"]
+
+    assert [v["scenario"] for v in per_scenario] == ["ripetitivo", "singolo"], (
+        "ordinati dal guadagno piu' grande al piu' piccolo"
+    )
+    assert per_scenario[0]["saved_ratio"] == pytest.approx(0.80)
+    assert per_scenario[1]["saved_ratio"] == pytest.approx(0.10)
+
+
+def test_i_totali_si_possono_leggere_per_un_solo_scenario():
+    from ecotokens.bench import BenchRun, Measurement
+
+    run = BenchRun(id="x", label="p", mode="simulato", created_at=1.0)
+    run.measurements = [
+        Measurement(scenario="a", variant="v", cost_usd=1.0, requests=2),
+        Measurement(scenario="b", variant="v", cost_usd=3.0, requests=5),
+    ]
+    assert run.totals("v").cost_usd == 4.0
+    assert run.totals("v", scenario="a").cost_usd == 1.0
+    assert run.totals("v", scenario="a").requests == 2
+
+def test_la_dashboard_mostra_il_confronto_col_caching_automatico():
+    """Chi apre la pagina per decidere deve trovare il riferimento giusto.
+
+    Il totale della scala di ablazione parte da "nessuna cache", che serve ad
+    attribuire un merito a ogni stadio ma non e' il punto di partenza di
+    nessuno. Senza questo pannello la pagina mostrerebbe solo il 95%, e chi lo
+    legge installerebbe aspettandosi di dividere la bolletta per venti.
+    """
+    from ecotokens.dashboard import _vs_automatico
+
+    dati = {
+        "vs_automatico": {
+            "reference_usd": 20.0,
+            "senza_cambiare_la_risposta": {"cost_usd": 11.0, "saved_ratio": 0.45},
+            "cambiando_la_risposta": {"cost_usd": 3.5, "saved_ratio": 0.825},
+            "by_scenario": [
+                {"scenario": "ripetitivo", "reference_usd": 10.0,
+                 "cost_usd": 2.0, "saved_ratio": 0.80},
+                {"scenario": "singolo", "reference_usd": 10.0,
+                 "cost_usd": 9.0, "saved_ratio": 0.10},
+            ],
+        }
+    }
+    pannello = _vs_automatico(dati)
+    assert "caching automatico" in pannello
+    assert "45.0%" in pannello, "il totale senza toccare le risposte"
+    assert "80.0%" in pannello and "10.0%" in pannello, "la forbice fra i carichi"
+    # E l'avvertenza sul resto, che non e' risparmio a parita' di risposta.
+    assert "82.5%" in pannello
+    # A capo nel sorgente: si confronta il testo senza gli spazi bianchi.
+    assert "un'altra risposta a un prezzo diverso" in " ".join(pannello.split())
+
+
+def test_senza_ablazione_il_pannello_non_compare():
+    """Meglio assente che con degli zeri: uno zero e' una misura, il vuoto no."""
+    from ecotokens.dashboard import _vs_automatico
+
+    assert _vs_automatico({}) == ""
+    assert _vs_automatico({"vs_automatico": {"reference_usd": 0.0}}) == ""

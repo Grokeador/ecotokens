@@ -40,6 +40,7 @@ from .bench import (
     measure_prompt_optimization,
     measure_pruning,
     open_results_store,
+    guadagno_sul_caching_automatico,
     run_ablation,
     run_benchmark,
     save_run,
@@ -146,6 +147,7 @@ async def build_dashboard_data(
             ablazione = await run_ablation(label="ablazione", project_root=root)
             await save_run(store, ablazione, corpus=f"ablazione {CORPUS_VERSION}")
             dati["stages"] = stage_contributions(ablazione)
+            dati["vs_automatico"] = guadagno_sul_caching_automatico(ablazione)
 
             dati["interactions"] = [
                 {
@@ -398,6 +400,7 @@ def _body(data: dict[str, Any]) -> str:
         _flow(data),
         _scenarios(data),
         _stages(data),
+        _vs_automatico(data),
         _interactions(data),
         _compaction(data),
         _prompt(data),
@@ -562,6 +565,67 @@ def _scenarios(data: dict[str, Any]) -> str:
     traffico prodotto scrivendolo.</p>
   </div>
   <div class="scenario-list">{''.join(righe)}</div>
+</section>"""
+
+
+def _vs_automatico(data: dict[str, Any]) -> str:
+    """Il confronto con cui si decide, non quello con cui si attribuisce.
+
+    La scala qui sopra parte da "nessuna cache": e' l'unico riferimento che
+    permetta di attribuire un merito a ogni singolo stadio, accendendoli uno
+    alla volta. Non e' pero' il punto di partenza di nessuno, perche' il
+    caching automatico e' gratis per chiunque. Chi guarda questa pagina per
+    decidere se il gateway gli serve ha bisogno dell'altra domanda, e non deve
+    essere costretto a fare la sottrazione da solo.
+    """
+    guadagno = data.get("vs_automatico")
+    if not guadagno or not guadagno.get("reference_usd"):
+        return ""
+
+    righe = "".join(
+        f"""<tr>
+      <td>{_esc(voce['scenario'])}</td>
+      <td class="num mono">{_fmt_usd(voce['reference_usd'])}</td>
+      <td class="num mono">{_fmt_usd(voce['cost_usd'])}</td>
+      <td class="num mono positivo">{_fmt_pct(voce['saved_ratio'])}</td>
+    </tr>"""
+        for voce in guadagno["by_scenario"]
+    )
+    senza = guadagno["senza_cambiare_la_risposta"]
+    cambiando = guadagno["cambiando_la_risposta"]
+    return f"""<section class="panel">
+  <div class="panel-head">
+    <h2>Quanto aggiunge a chi usa gi&agrave; il caching automatico</h2>
+    <p>Anthropic offre il prompt caching automatico: basta un
+    <span class="mono">cache_control</span> in cima alla richiesta e lo ottiene
+    chiunque. Il totale della scala qui sopra si confronta invece con
+    <em>nessuna cache</em>, che descriveva il mondo di prima e attribuisce al
+    gateway un merito che non &egrave; suo. Questa tabella &egrave; la stessa misura letta
+    dal riferimento giusto per chi deve decidere.</p>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Carico</th><th class="num">Con sola cache</th>
+        <th class="num">Dietro EcoTokens</th><th class="num">In meno</th>
+      </tr></thead>
+      <tbody>{righe}
+        <tr class="riga-totale">
+          <td><strong>totale</strong></td>
+          <td class="num mono">{_fmt_usd(guadagno['reference_usd'])}</td>
+          <td class="num mono">{_fmt_usd(senza['cost_usd'])}</td>
+          <td class="num mono positivo"><strong>{_fmt_pct(senza['saved_ratio'])}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">Senza toccare il contenuto delle risposte. La forbice fra i
+  carichi conta pi&ugrave; del totale: dove molte richieste diverse condividono un
+  prefisso il guadagno &egrave; grande, su una conversazione sola che cresce &egrave;
+  piccolo, perche' l&igrave; il caching automatico fa gi&agrave; quasi tutto da solo.
+  Accendendo declassamento del modello ed effort minimo si arriva a
+  {_fmt_pct(cambiando['saved_ratio'])}, ma quella &egrave; un'altra risposta a un
+  prezzo diverso.</p>
 </section>"""
 
 
@@ -1734,6 +1798,8 @@ p.note {
 
 /* --- tabella stadi --- */
 .table-wrap { overflow-x: auto; }
+.positivo { color: var(--good); }
+.riga-totale td { border-top: 1px solid var(--rule); }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 th {
   text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .1em;
