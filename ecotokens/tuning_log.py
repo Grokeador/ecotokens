@@ -625,5 +625,30 @@ TUNING_LOG: list[TuningEntry] = [
             "quanto sembri: e' tutto concentrato dove il fallimento e' silenzioso."
         ),
     ),
-
+    TuningEntry(
+        area="misura",
+        title="La dashboard smentiva la propria tabella sugli stadi che cambiano la risposta",
+        finding=(
+            "Il pannello 'Configurazione in vigore' apriva con una frase scritta a mano: "
+            "gli stadi capaci di cambiare il **contenuto** di una risposta - cache "
+            "semantica e cambio di modello - 'sono spenti per scelta'. Sotto, la tabella "
+            "generata dallo stato reale mostrava `cambio di modello: attivo`, perche' nel "
+            "frattempo il profilo predefinito era diventato `aggressivo`. La didascalia era "
+            "rimasta ferma al giorno in cui era stata scritta. Con lo stesso difetto, la "
+            "voce dell'effort si chiamava 'effort adattivo' anche con "
+            "`effort_policy = sempre_basso`, cioe' quando di adattivo non era rimasto "
+            "niente e l'effort scendeva anche sulle domande difficili."
+        ),
+        effect=(
+            "Nessun numero cambia: cambia chi li scrive. La frase si deduce ora dallo stato "
+            "degli stadi, e il nome della voce dell'effort segue la politica in vigore. Col "
+            "profilo aggressivo il pannello dice che il totale include una risposta diversa, "
+            "non solo un prezzo diverso; col prudente dice che e' la stessa risposta pagata "
+            "meno. Un test lo tiene fermo: nessuno stadio puo' risultare acceso nella "
+            "tabella e spento nella didascalia. Vale la pena distinguere il tipo di danno - "
+            "un dato sbagliato prima o poi si nota perche' stona con il resto, mentre due "
+            "affermazioni contrarie sulla stessa pagina lasciano il lettore senza modo di "
+            "scegliere, e la piu' rassicurante delle due vince."
+        ),
+    ),
 ]

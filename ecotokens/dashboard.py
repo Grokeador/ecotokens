@@ -260,6 +260,7 @@ async def build_dashboard_data(
 def _config_snapshot(settings: Settings) -> list[dict[str, Any]]:
     """Stato degli stadi, come lo vedrebbe una richiesta in arrivo adesso."""
     aggressivo = settings.profilo == "aggressivo"
+    adattivo = settings.router.effort_policy == "adattivo"
     return [
         {"name": f"profilo: {settings.profilo}", "enabled": True,
          "detail": "il modello e l'effort delle risposte cambiano"
@@ -275,8 +276,13 @@ def _config_snapshot(settings: Settings) -> list[dict[str, Any]]:
         {"name": "riassunto cronologia", "enabled": settings.context.local_compaction,
          "detail": f"scatti da {settings.context.recompute_every_messages} messaggi, "
                    f"tetto {settings.context.summary_max_tokens} token"},
-        {"name": "effort adattivo", "enabled": settings.router.effort_downshift,
-         "detail": f"domande sotto {settings.router.simple_max_question_tokens} token"},
+        # Il nome e il dettaglio seguono la politica: con `sempre_basso` di
+        # adattivo non c'e' piu' niente, e chiamarlo cosi' nasconderebbe che
+        # l'effort viene abbassato anche sulle domande difficili.
+        {"name": "effort adattivo" if adattivo else "effort sempre basso",
+         "enabled": settings.router.effort_downshift,
+         "detail": f"domande sotto {settings.router.simple_max_question_tokens} token"
+                   if adattivo else "su ogni richiesta, difficolta' ignorata"},
         {"name": "cambio di modello", "enabled": settings.router.model_downgrade,
          "detail": "una volta per sessione"},
         {"name": "memoria", "enabled": settings.memory.enabled,
@@ -1392,8 +1398,67 @@ def _live(data: dict[str, Any]) -> str:
 </section>"""
 
 
+# Gli stadi che possono restituire un contenuto diverso da quello che l'API
+# avrebbe prodotto senza gateway. Non sono ottimizzazioni neutre: il banco misura
+# quanto costa una risposta, non se e' la stessa risposta.
+STADI_CHE_CAMBIANO_IL_CONTENUTO = (
+    "cache semantica",
+    "cambio di modello",
+    "effort sempre basso",
+)
+
+
+def _config_prosa(stadi: list[dict[str, Any]]) -> str:
+    """La frase del pannello, dedotta dallo stato invece che ricordata.
+
+    E' stata sbagliata per un po': diceva che gli stadi che cambiano il contenuto
+    erano spenti mentre la tabella sotto ne mostrava due accesi, perche' il
+    profilo predefinito era diventato `aggressivo` e la frase no. Una didascalia
+    che contraddice la propria tabella e' peggio di una assente - chi legge non
+    sa quale delle due credere.
+    """
+    accesi = [
+        stadio["name"]
+        for stadio in stadi
+        if stadio["name"] in STADI_CHE_CAMBIANO_IL_CONTENUTO and stadio["enabled"]
+    ]
+    spenti = [
+        stadio["name"]
+        for stadio in stadi
+        if stadio["name"] in STADI_CHE_CAMBIANO_IL_CONTENUTO and not stadio["enabled"]
+    ]
+    if not accesi:
+        return (
+            "Gli stadi che possono cambiare il <em>contenuto</em> di una risposta "
+            f"&mdash; {_elenco(spenti)} &mdash; sono spenti: quello che si "
+            "risparmia qui e' la stessa risposta pagata meno."
+        )
+    frase = (
+        f"Attenzione a come si legge il totale: {_elenco(accesi)} "
+        f"{'cambiano' if len(accesi) > 1 else 'cambia'} il <em>contenuto</em> della "
+        "risposta, non solo il suo prezzo. Il banco misura quanto e' lunga una "
+        "risposta, non se e' giusta, quindi la parte di risparmio che arriva da qui "
+        "e' interamente misurata e il suo costo interamente no."
+    )
+    if spenti:
+        # "non e' in uso" invece di "resta spento": i nomi degli stadi hanno
+        # generi diversi e la frase si costruisce senza sapere quali finiranno
+        # nell'elenco.
+        uso = "non sono in uso" if len(spenti) > 1 else "non e' in uso"
+        frase += f" {_elenco(spenti).capitalize()} {uso}."
+    return frase
+
+
+def _elenco(nomi: list[str]) -> str:
+    """`a`, `a e b`, `a, b e c` - senza virgola prima della congiunzione."""
+    if len(nomi) <= 1:
+        return _esc(nomi[0]) if nomi else ""
+    return ", ".join(_esc(n) for n in nomi[:-1]) + " e " + _esc(nomi[-1])
+
+
 def _config(data: dict[str, Any]) -> str:
     stadi = data.get("config") or []
+    prosa = _config_prosa(stadi)
     voci = "".join(
         f"""<li class="{'on' if stadio['enabled'] else 'off'}">
       <span class="dot" aria-hidden="true"></span>
@@ -1406,9 +1471,7 @@ def _config(data: dict[str, Any]) -> str:
     return f"""<section class="panel">
   <div class="panel-head">
     <h2>Configurazione in vigore</h2>
-    <p>Gli stadi che possono cambiare il <em>contenuto</em> di una risposta &mdash;
-    cache semantica e cambio di modello &mdash; sono spenti per scelta: accenderli
-    e' una decisione, non un valore predefinito.</p>
+    <p>{prosa}</p>
   </div>
   <ul class="config">{voci}</ul>
 </section>"""

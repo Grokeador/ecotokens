@@ -239,3 +239,66 @@ def test_il_file_di_esempio_fa_quello_che_dichiara():
     prudente = Settings.model_validate({**grezzo, "profilo": "prudente"})
     assert prudente.router.model_downgrade is False
     assert prudente.router.effort_policy == "adattivo"
+
+# --- la didascalia della dashboard -----------------------------------------
+
+
+def _pannello(profilo: str) -> tuple[str, list[dict]]:
+    """La sezione "Configurazione in vigore" per un profilo, e i suoi stadi."""
+    from ecotokens.dashboard import _config, _config_snapshot
+
+    stadi = _config_snapshot(Settings(profilo=profilo))
+    return _config(({"config": stadi})), stadi
+
+
+def test_la_didascalia_non_puo_contraddire_la_propria_tabella():
+    """Il difetto che questo test esiste per impedire, gia' accaduto una volta.
+
+    La frase in cima al pannello diceva che gli stadi capaci di cambiare il
+    contenuto di una risposta erano "spenti per scelta", mentre la tabella
+    subito sotto ne mostrava due accesi: il profilo predefinito era diventato
+    aggressivo e la frase era rimasta indietro. Chi legge non ha modo di sapere
+    quale delle due credere, ed e' peggio di un dato semplicemente sbagliato.
+    """
+    from ecotokens.dashboard import STADI_CHE_CAMBIANO_IL_CONTENUTO
+
+    for profilo in ("prudente", "aggressivo"):
+        pannello, stadi = _pannello(profilo)
+        accesi = [
+            s["name"]
+            for s in stadi
+            if s["name"] in STADI_CHE_CAMBIANO_IL_CONTENUTO and s["enabled"]
+        ]
+        if accesi:
+            assert "sono spenti" not in pannello, profilo
+            for nome in accesi:
+                assert nome in pannello, f"{profilo}: {nome} acceso ma non nominato"
+        else:
+            assert "sono spenti" in pannello, profilo
+
+
+def test_col_profilo_aggressivo_il_pannello_avvisa_che_la_risposta_cambia():
+    """Il 17% del cambio di modello non e' risparmio a parita' di risposta.
+
+    E' l'unica avvertenza che separa "costa meno" da "e' un'altra cosa": se non
+    compare accanto al totale, il totale si legge come se fosse gratis.
+    """
+    pannello, _ = _pannello("aggressivo")
+    assert "cambio di modello" in pannello
+    assert "non se e' giusta" in pannello
+
+
+def test_col_profilo_prudente_il_pannello_dice_che_e_la_stessa_risposta():
+    pannello, _ = _pannello("prudente")
+    assert "la stessa risposta pagata meno" in pannello
+    assert "cache semantica" in pannello
+
+
+def test_lo_stadio_dell_effort_si_chiama_come_si_comporta():
+    """Con `sempre_basso` di adattivo non c'e' piu' niente da adattare."""
+    _, prudenti = _pannello("prudente")
+    _, aggressivi = _pannello("aggressivo")
+    nomi = lambda stadi: [s["name"] for s in stadi]
+    assert "effort adattivo" in nomi(prudenti)
+    assert "effort sempre basso" in nomi(aggressivi)
+    assert "effort adattivo" not in nomi(aggressivi)
