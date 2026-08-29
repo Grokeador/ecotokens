@@ -107,7 +107,7 @@ tabella [qui sopra](#quanto-aggiunge-a-chi-usa-già-il-caching-automatico).
 
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
-| **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, **+19,9%** a prefisso condiviso; contro uno sviluppatore che marca il proprio system prompt, **+22,6%** su una conversazione che cresce e **−0,2%** su turni singoli — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
+| **Prompt caching** | contro uno sviluppatore che marca il proprio system prompt: **+52%** su un ciclo agentico, **+22,6%** su una chat che cresce, **−0,2%** su turni singoli — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
 | **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno; ma il profilo predefinito va oltre e lo tiene **sempre** al minimo |
 | **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
@@ -699,13 +699,24 @@ posto suo. Misurato:
 
 | Traffico | Totale vs nessuna cache | di cui Anthropic | di cui EcoTokens |
 |---|---:|---:|---:|
+| **ciclo agentico, 20 turni con tool** | 53,6% | 3,4% | **+52,0%** |
+| ciclo agentico, 8 chiamate per turno | 57,2% | 3,2% | **+55,7%** |
+| domande che si ripetono | 87,8% | 4,5% | **+87,2%** |
 | una conversazione che cresce, 8 turni | 41,7% | 24,7% | **+22,6%** |
 | molti utenti, stesso system, turno singolo | 26,3% | 26,4% | **−0,2%** |
-| domande che si ripetono | 87,8% | 4,5% | **+87,2%** |
 
-Su una conversazione che cresce EcoTokens mette in cache **la conversazione**,
-non solo il system: è esattamente ciò che quel `cache_control` in una riga non
-fa. Sulle domande ripetute vince la cache esatta, che non sconta il prezzo di
+La riga di testa è quella che descrive un assistente di sviluppo, ed è la più
+favorevole di tutte per una ragione strutturale: in un ciclo agentico i
+risultati dei tool sono enormemente più grossi del prompt di sistema, quindi
+chi marca solo il proprio `system` cattura il 3% e lascia sul tavolo tutto il
+resto. Il prefisso che vale è la **conversazione**, e marcarla bene richiede di
+sapere dov'è cresciuta — che è precisamente il mestiere del pianificatore.
+
+Il filo è sempre lo stesso: EcoTokens mette in cache **la conversazione**, non
+solo il system, ed è esattamente ciò che quel `cache_control` in una riga non
+fa. Quanto valga dipende da quanto la conversazione pesa rispetto al prompt di
+sistema — molto in un ciclo agentico, poco in una chat breve, niente su una
+domanda isolata. Sulle domande ripetute vince la cache esatta, che non sconta il prezzo di
 un token: lo azzera. Su molti utenti a turno singolo l'unica cosa condivisa è
 il system prompt, che l'altro ha già messo in cache da solo: **non c'è niente
 da aggiungere, e la riga giusta è quella che dice zero**.

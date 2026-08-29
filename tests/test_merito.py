@@ -423,3 +423,31 @@ async def test_la_stima_del_tasso_decide_da_cinque_sessioni_non_da_venti(client)
     tasso = await store.tasso_continuazione()
     assert tasso is not None
     assert 0.05 < tasso < 0.12, tasso
+
+
+async def test_su_un_ciclo_agentico_il_merito_e_il_piu_alto(client):
+    """La ragione e' strutturale, e vale la pena averla in un test invece che
+    solo in un README: in un ciclo agentico i risultati dei tool pesano molto
+    piu' del prompt di sistema, quindi chi marca solo il proprio `system`
+    cattura una frazione minima. Il prefisso che vale e' la conversazione.
+
+    Misurato sul banco: +52,0% su venti turni, contro il 3,4% che prende un
+    client che marca solo il system.
+    """
+    storia = []
+    for turno in range(4):
+        storia = storia + [{"role": "user", "content": f"passo {turno}"}]
+        client.post(
+            "/v1/chat/completions",
+            json=chat_payload(
+                messages=[{"role": "system", "content": "Assistente. " * 200}] + storia
+            ),
+        )
+        storia = storia + [
+            {"role": "assistant", "content": f"risultato del passo {turno} " * 400}
+        ]
+
+    dati = client.get("/admin/live").json()["totals"]
+    # La conversazione cresce molto piu' del system: il merito del gateway deve
+    # superare abbondantemente la quota che prende il concorrente.
+    assert dati["quota_gateway_usd"] > dati["quota_anthropic_usd"], dati

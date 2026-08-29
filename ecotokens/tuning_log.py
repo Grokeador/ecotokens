@@ -1214,5 +1214,27 @@ TUNING_LOG: list[TuningEntry] = [
             "volte - ognuna delle quali dava un numero plausibile."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Il carico su cui il gateway vale di piu' non era mai stato misurato cosi'",
+        finding=(
+            "Le tre forme di traffico confrontate con il concorrente accorto erano "
+            "chat, turno singolo e domande ripetute. Mancava il ciclo agentico - "
+            "molti turni, tool che restituiscono blocchi grossi - che e' il carico "
+            "piu' vicino a come lavora una sessione di sviluppo, cioe' al modo in "
+            "cui questo progetto stesso e' stato costruito."
+        ),
+        effect=(
+            "E' il caso in cui il gateway vale di piu': **+52,0%** su venti turni, "
+            "+55,7% con otto chiamate per turno, contro il 3,4% che prende chi marca "
+            "solo il proprio system prompt. La ragione e' strutturale e vale piu' del "
+            "numero: in un ciclo agentico i risultati dei tool pesano molto piu' del "
+            "`system`, quindi il prefisso che conta e' **la conversazione**, e "
+            "marcarla bene richiede di sapere dov'e' cresciuta. Non averlo misurato "
+            "prima significa che per mesi la documentazione ha citato numeri fra il "
+            "-0,2% e il +22% mentre il caso migliore stava a +52 e nessuno lo "
+            "guardava: un metro puo' sbagliare anche solo scegliendo cosa misurare."
+        ),
+    ),
 
 ]
