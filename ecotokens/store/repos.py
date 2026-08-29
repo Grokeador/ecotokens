@@ -398,6 +398,7 @@ class Store:
         baseline_cost_usd: float,
         saved_usd: float,
         baseline_ingenua_usd: float = 0.0,
+        costo_modello_richiesto_usd: float = 0.0,
         cache_ttl: str = "5m",
         latency_ms: float | None = None,
         notes: list[str] | None = None,
@@ -421,8 +422,8 @@ class Store:
                 cache_creation_tokens, cache_read_tokens, cache_ttl, cost_usd,
                 baseline_cost_usd, saved_usd, latency_ms, notes,
                 stages, overhead_tokens, aux_cost_usd, client_format,
-                baseline_ingenua_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                baseline_ingenua_usd, costo_modello_richiesto_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 ts,
@@ -445,6 +446,7 @@ class Store:
                 float(aux_cost_usd),
                 client_format,
                 float(baseline_ingenua_usd),
+                float(costo_modello_richiesto_usd),
             ),
         )
 
@@ -479,12 +481,14 @@ class Store:
     _CONSUMI = """
         SELECT day, model, source, 1 AS requests, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens, cost_usd,
-               baseline_cost_usd, baseline_ingenua_usd, saved_usd
+               baseline_cost_usd, baseline_ingenua_usd,
+               costo_modello_richiesto_usd, saved_usd
         FROM usage_events
         UNION ALL
         SELECT day, model, source, requests, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens, cost_usd,
-               baseline_cost_usd, baseline_ingenua_usd, saved_usd
+               baseline_cost_usd, baseline_ingenua_usd,
+               costo_modello_richiesto_usd, saved_usd
         FROM usage_daily
     """
 
@@ -509,6 +513,18 @@ class Store:
                                         THEN cost_usd ELSE 0 END), 0) AS costo_confrontabile,
                       COALESCE(SUM(CASE WHEN baseline_ingenua_usd > 0
                                         THEN requests ELSE 0 END), 0) AS richieste_confrontabili,
+                      -- Il risparmio si divide in due meta' che non si
+                      -- possono sommare senza dirlo: il pianificatore lascia
+                      -- la risposta identica, il declassamento la cambia. Il
+                      -- profilo spedito ha il declassamento acceso, mentre i
+                      -- numeri pubblicati dal progetto sono misurati con il
+                      -- profilo prudente: senza questa colonna un utente
+                      -- confronta due cifre che misurano cose diverse.
+                      COALESCE(SUM(costo_modello_richiesto_usd), 0)
+                          AS costo_modello_richiesto_usd,
+                      COALESCE(SUM(CASE WHEN costo_modello_richiesto_usd > 0
+                                        THEN requests ELSE 0 END), 0)
+                          AS richieste_con_sostituzione,
                       COALESCE(SUM(saved_usd), 0)            AS saved_usd
                FROM ({self._CONSUMI})""",
             pesante=True,
@@ -964,12 +980,14 @@ class Store:
         await self.db.execute(
             """INSERT INTO usage_daily (day, model, source, requests, input_tokens,
                    output_tokens, cache_creation_tokens, cache_read_tokens,
-                   cost_usd, baseline_cost_usd, baseline_ingenua_usd, saved_usd)
+                   cost_usd, baseline_cost_usd, baseline_ingenua_usd,
+                   costo_modello_richiesto_usd, saved_usd)
                SELECT day, model, source, COUNT(*),
                       SUM(input_tokens), SUM(output_tokens),
                       SUM(cache_creation_tokens), SUM(cache_read_tokens),
                       SUM(cost_usd), SUM(baseline_cost_usd),
-                      SUM(baseline_ingenua_usd), SUM(saved_usd)
+                      SUM(baseline_ingenua_usd),
+                      SUM(costo_modello_richiesto_usd), SUM(saved_usd)
                FROM usage_events WHERE day < ?
                GROUP BY day, model, source
                ON CONFLICT(day, model, source) DO UPDATE SET
@@ -981,6 +999,8 @@ class Store:
                    cost_usd = cost_usd + excluded.cost_usd,
                    baseline_cost_usd = baseline_cost_usd + excluded.baseline_cost_usd,
                    baseline_ingenua_usd = baseline_ingenua_usd + excluded.baseline_ingenua_usd,
+                   costo_modello_richiesto_usd = costo_modello_richiesto_usd
+                       + excluded.costo_modello_richiesto_usd,
                    saved_usd = saved_usd + excluded.saved_usd""",
             (confine,),
         )

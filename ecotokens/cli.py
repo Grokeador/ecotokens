@@ -388,6 +388,20 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
             f"[{stile_merito} bold]${merito:+.4f}  "
             f"({merito / ingenua * 100:+.1f}% su {confrontabili:,} richieste)[/]",
         )
+        # E subito sotto, la meta' che non e' la stessa risposta. Il profilo
+        # spedito declassa il modello, i numeri pubblicati sono misurati senza
+        # declassamento: senza questa riga le due cifre sembrano confrontabili
+        # e non lo sono.
+        chiesto = float(data.get("costo_modello_richiesto_usd") or 0)
+        sostituite = int(data.get("richieste_con_sostituzione") or 0)
+        if chiesto:
+            da_sostituzione = chiesto - confrontabile
+            table.add_row(
+                "  di cui da sostituzione del modello",
+                f"[yellow]${da_sostituzione:+.4f}  "
+                f"(su {sostituite:,} richieste servite da un modello "
+                f"diverso da quello chiesto)[/]",
+            )
     table.add_row("Spesa di oggi", f"${today:.4f}")
     table.add_row("Spesa del mese", f"${month:.4f}")
     console.print(table)

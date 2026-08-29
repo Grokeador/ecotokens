@@ -254,6 +254,12 @@ END;
 # versione precedente resterebbe senza - e le query nuove fallirebbero su di
 # esso invece che su un database vuoto, cioe' proprio dove i dati contano.
 COLONNE_AGGIUNTE: list[tuple[str, str, str]] = [
+    # Cosa sarebbe costato lo stesso consumo alle tariffe del modello
+    # **chiesto**. Serve a separare due risparmi di natura diversa che finivano
+    # sommati in una cifra sola: mettere in cache lascia la risposta identica,
+    # sostituire il modello no. Zero vuol dire "non registrato".
+    ("usage_events", "costo_modello_richiesto_usd", "REAL NOT NULL DEFAULT 0"),
+    ("usage_daily", "costo_modello_richiesto_usd", "REAL NOT NULL DEFAULT 0"),
     ("usage_events", "cache_ttl", "TEXT NOT NULL DEFAULT '5m'"),
     ("bench_runs", "fingerprint", "TEXT NOT NULL DEFAULT ''"),
     # Le quattro grandezze che il gateway calcolava gia' e poi buttava via.

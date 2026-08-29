@@ -21,6 +21,7 @@ from ..pricing import (
     baseline_ingenua_usd,
     cost_usd,
     modello_riconosciuto,
+    resolve_model,
 )
 from ..tokens import estimate_prompt_tokens
 from .base import SOURCE_API, BaseStage, RequestContext
@@ -177,6 +178,26 @@ class LedgerStage(BaseStage):
         # dal merito del gateway senza toccare il resto: la spesa resta
         # registrata, il tetto continua a contarla, e la pagina dice su quante
         # richieste si regge il confronto.
+        # Due risparmi di natura diversa finivano sommati in una cifra sola.
+        # Mettere in cache lascia la risposta **identica**: e' guadagno secco.
+        # Sostituire il modello no - e' un'altra risposta a un prezzo diverso,
+        # e il banco lo dice gia' di se stesso ("misura quanto e' lunga, non se
+        # e' giusta"). Il profilo spedito ha il declassamento acceso mentre i
+        # numeri pubblicati sono misurati col profilo prudente, quindi senza
+        # questa separazione un utente confronta la propria pagina con il
+        # README e trova due cifre che misurano cose diverse.
+        if ctx.usage is not None and ctx.model != resolve_model(ctx.requested_model):
+            ctx.costo_modello_richiesto_usd = cost_usd(
+                ctx.requested_model, ctx.usage, ctx.cache_ttl
+            )
+            differenza = ctx.costo_modello_richiesto_usd - ctx.total_cost_usd
+            if differenza > 0:
+                ctx.note(
+                    f"di cui {differenza:.6f} USD dalla sostituzione del modello "
+                    f"({ctx.requested_model} -> {ctx.model}): non e' la stessa "
+                    "risposta a meno prezzo, e' un'altra risposta"
+                )
+
         if ctx.nome_richiesto_grezzo and not modello_riconosciuto(
             ctx.nome_richiesto_grezzo
         ):
@@ -195,6 +216,7 @@ class LedgerStage(BaseStage):
             cost_usd=ctx.total_cost_usd,
             baseline_cost_usd=baseline,
             baseline_ingenua_usd=ctx.baseline_ingenua_usd,
+            costo_modello_richiesto_usd=ctx.costo_modello_richiesto_usd,
             saved_usd=ctx.saved_usd,
             cache_ttl=ctx.cache_ttl,
             latency_ms=ctx.elapsed_ms,

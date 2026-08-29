@@ -150,6 +150,10 @@ class RequestContext:
     # Fra questa e `baseline_cost_usd` sta lo sconto che Anthropic fa a
     # chiunque; fra questa e `cost_usd` sta quello che aggiunge EcoTokens.
     baseline_ingenua_usd: float = 0.0
+    # Cosa sarebbe costato lo stesso consumo alle tariffe del modello
+    # chiesto. Zero quando non c'e' stata sostituzione: e' l'unico modo di
+    # distinguere 'nessuna sostituzione' da 'sostituzione a costo pari'.
+    costo_modello_richiesto_usd: float = 0.0
     # Spesa delle chiamate che il gateway fa per conto proprio: riassunti di
     # compattazione, estrazione dei fatti da ricordare. Non compare in
     # `response.usage` perche' non appartiene alla risposta dell'utente, ma
