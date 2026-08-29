@@ -1333,5 +1333,49 @@ TUNING_LOG: list[TuningEntry] = [
             "condiviso, e che il rumore di un errore all'import e' un regalo."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="La sensibilita' della deduplica diceva +42,8% dove il risparmio era zero",
+        finding=(
+            "La deduplicazione dei `tool_result` misurava +61,0% su un ciclo "
+            "agentico. Per capire quanto dipendesse dalla ripetizione, la stessa "
+            "misura e' stata rifatta variando il numero di file distinti. Il "
+            "controllo - sessanta file letti una volta ciascuno, cioe' **nessuna "
+            "ripetizione** - dava +42,8%, che e' impossibile. Il generatore "
+            "sceglieva il file con `(turno + k) % n`: su venti turni e tre "
+            "chiamate quella formula produce solo ventidue indici distinti, "
+            "qualunque sia `n`. Il carico si ripeteva da solo."
+        ),
+        effect=(
+            "Corretto in `(turno * chiamate + k) % n`, la scala diventa "
+            "coerente: 12 riletture per file **+61,0%**, 3 riletture +43,8%, "
+            "nessuna ripetizione **+0,0%** con zero sostituzioni. E' il terzo "
+            "numero a rendere credibili i primi due, ed e' quello che mancava. "
+            "Un test di controllo che non puo' dare zero non e' un controllo - "
+            "e il difetto stava nel generatore del carico, cioe' nel posto dove "
+            "in questo progetto si nasconde quasi meta' dei difetti."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="`ritenzione` non puo' misurare la deduplicazione: non ha un solo tool_result",
+        finding=(
+            "Il piano prevedeva di sottoporre la deduplicazione a `ecotokens "
+            "ritenzione` prima di accenderla. Gli scenari di ritenzione sono "
+            "pero' conversazioni normali: `grep -c tool_result retention.py` "
+            "restituisce **zero**. Una variante nuova li' avrebbe misurato "
+            "l'inazione - il rischio che il codice di quel modulo segnala da se' "
+            "a proposito delle soglie."
+        ),
+        effect=(
+            "La domanda e' stata posta altrove e in forma piu' stretta: la prima "
+            "copia resta intatta, quindi il fatto e' ancora nel prompt "
+            "(`tests/test_dedup.py`). Resta non verificato che il modello sappia "
+            "**usare** un riferimento all'indietro invece del testo, ed e' una "
+            "cosa che nessun conteggio di token puo' dire. Lo stadio esce quindi "
+            "spento, con l'assunzione dichiarata: la regola del progetto quando "
+            "la misura non e' possibile, non un ripiego."
+        ),
+    ),
 
 ]

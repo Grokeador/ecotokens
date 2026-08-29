@@ -231,6 +231,29 @@ ASSUNZIONI: list[Assunzione] = [
             "turni e guarda che `cache_read_input_tokens` cresca."
         ),
     ),
+    Assunzione(
+        nome="Il modello sa usare un riferimento all'indietro",
+        valore=(
+            "un `tool_result` sostituito da «identico a quello di toolu_X, già "
+            "presente sopra» viene risolto guardando la copia più su"
+        ),
+        fonte=DICHIARATA,
+        dove="pipeline.context.ContextStage._dedup_tool_results",
+        cosa_cambia=(
+            "Se il modello non risalisse alla prima copia, la deduplicazione "
+            "non sarebbe un risparmio ma una **perdita di informazione** "
+            "travestita: il testo e' ancora nel prompt, ma inutile. E' l'unica "
+            "ragione per cui lo stadio esce spento nonostante misuri +61,0% su "
+            "un ciclo agentico con dodici riletture per file."
+        ),
+        come_verificarla=(
+            "Non con un conteggio di token: serve una domanda la cui risposta "
+            "dipenda dal contenuto deduplicato, posta al modello vero, e il "
+            "confronto della risposta con e senza lo stadio acceso. `ecotokens "
+            "ritenzione` **non** sa farlo: i suoi scenari non contengono un "
+            "solo `tool_result`."
+        ),
+    ),
 ]
 
 

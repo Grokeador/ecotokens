@@ -13,6 +13,16 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ### Nuovo
 
+- **Deduplicazione dei `tool_result`, spenta** (`[context] dedup_tool_results`).
+  In un ciclo agentico lo stesso file viene riletto in turni diversi e
+  rispedito intero ogni volta; sostituire le copie successive con un
+  riferimento alla prima vale **+61,0%** con dodici riletture per file, +43,8%
+  con tre, **+0,0%** senza ripetizione. La prima copia resta sempre intatta, sia
+  perché è dentro il prefisso già in cache, sia perché è ciò che tiene
+  l'informazione nel prompt. Esce spenta lo stesso: che il modello sappia
+  *usare* un riferimento all'indietro invece del testo è un'assunzione
+  dichiarata e non verificabile senza l'API vera.
+
 - **Più client dietro lo stesso gateway.** `[server.chiavi]` associa un nome a
   ogni chiave: `stats` e `/admin/stats` mostrano quanto ha speso ciascuno, e
   `[budget] client_daily_usd` (con eccezioni per nome in `tetti_client`) mette

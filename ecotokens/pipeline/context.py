@@ -41,6 +41,7 @@ quei blocchi andrebbero persi al primo giro.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -75,6 +76,11 @@ CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 TOKEN_PER_RIGA = 25
 
 
+# Sotto questa lunghezza non si deduplica: il testo del riferimento occupa
+# ~90 caratteri, e sostituire qualcosa di piu' corto **aggiungerebbe** token.
+_MINIMO_PER_DEDUP = 400
+
+
 class ContextStage(BaseStage):
     name = "context"
     riscrive = True  # Pota, compatta e riscrive la cronologia.
@@ -97,6 +103,12 @@ class ContextStage(BaseStage):
         # un milione, quindi la stessa frazione significa cose molto diverse.
         in_pericolo = ratio >= self.config.trigger_ratio
         conviene = self._prunable_tokens(ctx) >= self.config.prune_min_prunable_tokens
+        # La deduplicazione viene **prima** delle altre due: lavora sui
+        # duplicati, non sull'eta', quindi puo' liberare abbastanza da rendere
+        # inutile una potatura che avrebbe buttato via materiale ancora utile.
+        if self.config.dedup_tool_results:
+            self._dedup_tool_results(ctx)
+
         if not (in_pericolo or conviene):
             return
 
@@ -104,6 +116,71 @@ class ContextStage(BaseStage):
 
         if self.config.local_compaction and ratio >= self.config.hard_ratio:
             await self._apply_local_summary(ctx)
+
+    # -- deduplicazione dei risultati identici -----------------------------
+
+    def _dedup_tool_results(self, ctx: RequestContext) -> None:
+        """Sostituisce i `tool_result` gia' visti con un riferimento al primo.
+
+        Due scelte che sembrano dettagli e non lo sono.
+
+        **Si tiene il primo, non l'ultimo.** Il primo sta piu' a monte nella
+        conversazione, cioe' dentro il prefisso gia' in cache: sostituire quello
+        invaliderebbe tutto cio' che segue e la deduplicazione costerebbe piu'
+        di quanto rende. Sostituendo i successivi il prefisso resta intatto.
+
+        **Non si tocca l'ultimo turno.** E' la domanda a cui si sta
+        rispondendo, e il materiale appena raccolto e' quello che serve adesso.
+        Il guadagno li' sarebbe minimo e il rischio massimo.
+        """
+        messaggi = ctx.params.get("messages") or []
+        if len(messaggi) < 3:
+            return
+
+        visti: dict[str, str] = {}
+        sostituiti = 0
+        risparmiati = 0
+
+        # `- 1`: l'ultimo messaggio resta com'e'.
+        for messaggio in messaggi[:-1]:
+            contenuto = messaggio.get("content")
+            if not isinstance(contenuto, list):
+                continue
+            for indice, blocco in enumerate(contenuto):
+                if not isinstance(blocco, dict) or blocco.get("type") != "tool_result":
+                    continue
+                testo = _testo_del_risultato(blocco)
+                if not testo or len(testo) < _MINIMO_PER_DEDUP:
+                    continue
+                impronta = hashlib.sha256(testo.encode("utf-8")).hexdigest()
+                primo = visti.get(impronta)
+                if primo is None:
+                    visti[impronta] = str(blocco.get("tool_use_id") or "")
+                    continue
+                # Il blocco resta un `tool_result` con lo stesso
+                # `tool_use_id`: toglierlo spezzerebbe la coppia e la richiesta
+                # fallirebbe con un 400.
+                contenuto[indice] = {
+                    "type": "tool_result",
+                    "tool_use_id": blocco.get("tool_use_id"),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"[risultato identico a quello di {primo}, "
+                                "gia' presente sopra in questa conversazione]"
+                            ),
+                        }
+                    ],
+                }
+                sostituiti += 1
+                risparmiati += len(testo)
+
+        if sostituiti:
+            ctx.note(
+                f"deduplicazione: {sostituiti} risultati di tool identici "
+                f"sostituiti da un riferimento ({risparmiati // 4} token circa)"
+            )
 
     # -- potatura lato server ---------------------------------------------
 
@@ -418,6 +495,20 @@ def _tronca(text: str, limite: int) -> str:
         return text
     meta = limite // 2
     return f"{text[:meta]} […] {text[-meta:]}"
+
+
+def _testo_del_risultato(blocco: dict[str, Any]) -> str:
+    """Il testo di un `tool_result`, in qualunque delle due forme ammesse."""
+    contenuto = blocco.get("content")
+    if isinstance(contenuto, str):
+        return contenuto
+    if isinstance(contenuto, list):
+        return "".join(
+            parte.get("text", "")
+            for parte in contenuto
+            if isinstance(parte, dict) and parte.get("type") == "text"
+        )
+    return ""
 
 
 def _safe_cut_point(messages: list[dict[str, Any]], cut: int) -> int:

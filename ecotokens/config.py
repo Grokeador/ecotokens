@@ -164,6 +164,15 @@ class ContextSettings(BaseModel):
     prune_clear_at_least_tokens: int = 0
     # Tool i cui risultati non vanno mai svuotati.
     prune_exclude_tools: list[str] = Field(default_factory=list)
+    # Sostituisce i `tool_result` **identici** gia' presenti nel contesto con un
+    # riferimento breve al primo. In un ciclo agentico lo stesso file viene
+    # riletto in turni diversi e rispedito intero ogni volta.
+    #
+    # Spento finche' non e' misurato. Cambia il contenuto del prompt, quindi va
+    # sottoposto a `ecotokens ritenzione` - cio' che serviva e' arrivato? - e
+    # non solo a `ablate`, che direbbe soltanto quanto costa meno. Un risparmio
+    # su una risposta peggiore non e' un risparmio.
+    dedup_tool_results: bool = False
     # Frazione della finestra del modello oltre la quale si pota.
     trigger_ratio: float = 0.6
     # Oltre questa frazione la potatura non basta e si riassume la parte
