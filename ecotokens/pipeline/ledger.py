@@ -16,9 +16,59 @@ import logging
 from typing import Any
 
 from ..pricing import Usage, baseline_cost_usd, baseline_ingenua_usd, cost_usd
+from ..tokens import estimate_prompt_tokens
 from .base import SOURCE_API, BaseStage, RequestContext
 
 logger = logging.getLogger("ecotokens.ledger")
+
+
+def _prefisso_nelle_unita_dell_api(ctx: RequestContext, usage: Usage) -> int:
+    """Il prefisso stabile, contato con lo stesso righello del resto del conto.
+
+    `stable_prefix_tokens` viene dallo stimatore locale, che approssima a 3,6
+    caratteri per token. `usage` viene dall'API, che ha il suo tokenizzatore. I
+    due numeri finiscono nella **stessa sottrazione**, e se le unita' non
+    coincidono la differenza contiene anche il disallineamento fra i righelli.
+
+    Non e' teoria: contro il simulatore, che conta a 4 caratteri per token, lo
+    scarto e' dell'11%, e bastava a far risultare il gateway **dannoso** su
+    traffico a turno singolo. Un confronto in unita' diverse da' una risposta
+    plausibile e sbagliata - la firma di meta' delle voci del registro delle
+    correzioni.
+
+    La conversione non introduce nessuna costante: si stima l'intero prompt con
+    lo stesso stimatore e si guarda quanto l'API ha effettivamente contato. Il
+    rapporto fra i due e' il fattore di conversione fra i righelli, qualunque
+    sia il tokenizzatore dall'altra parte, e si aggiorna da solo se lo
+    stimatore cambia.
+    """
+    stimato = estimate_prompt_tokens(ctx.params)
+    reale = usage.total_prompt_tokens
+    convertito = (
+        int(ctx.stable_prefix_tokens * reale / stimato)
+        if stimato and reale
+        else ctx.stable_prefix_tokens
+    )
+
+    # E dove la dimensione vera la conosciamo, si usa quella invece della
+    # stima. Se il breakpoint e' andato sul system, `cache_read_tokens` - o
+    # `cache_creation_tokens` alla prima richiesta - **e' il prefisso stabile
+    # contato dall'API**: la stessa cosa che stiamo stimando, misurata da chi
+    # poi la fattura.
+    #
+    # Non e' il ragionamento circolare corretto poco fa: quello riguardava il
+    # **quando** (se il prefisso fosse caldo), e dedurlo dalla nostra politica
+    # ci premiava per aver smesso di ottimizzare. Questo riguarda il **quanto**,
+    # ed e' una misura dello stesso oggetto.
+    #
+    # Il minimo, e non l'osservazione secca, perche' su una conversazione lunga
+    # il nostro breakpoint copre anche i turni: li' il concorrente marca solo
+    # il system, e accreditargli tutto il resto sarebbe regalargli il lavoro
+    # del gateway.
+    osservato = max(usage.cache_read_tokens, usage.cache_creation_tokens)
+    if osservato:
+        return min(convertito, osservato)
+    return convertito
 
 
 class LedgerStage(BaseStage):
@@ -84,7 +134,7 @@ class LedgerStage(BaseStage):
             ctx.baseline_ingenua_usd = baseline_ingenua_usd(
                 ctx.requested_model,
                 usage,
-                ctx.stable_prefix_tokens,
+                _prefisso_nelle_unita_dell_api(ctx, usage),
                 prefisso_freddo=not ctx.store.prefisso_gia_visto(ctx.stable_prefix_hash),
             )
             # Le chiamate che il gateway ha fatto per conto proprio - il

@@ -94,8 +94,8 @@ GRUPPI: tuple[Gruppo, ...] = (
             "conversazione sola, piu' 19,9 quando molte richieste condividono un "
             "prefisso. Contro il confronto che conta davvero - uno sviluppatore "
             "che mette un `cache_control` sul proprio system prompt, una riga - "
-            "il pianificatore vale +21,1% su una conversazione che cresce e "
-            "-4,6% su molti utenti a turno singolo."
+            "il pianificatore vale +22,6% su una conversazione che cresce e "
+            "-0,2% su molti utenti a turno singolo."
         ),
         campi=(
             Campo("cache_planner.enabled", "Pianificatore acceso", "booleano",
@@ -114,8 +114,9 @@ GRUPPI: tuple[Gruppo, ...] = (
                   "il 27,8% di conversazioni che proseguono, che e' il rapporto fra "
                   "i due moltiplicatori dell'API e non un numero scelto. Acceso, il "
                   "gateway osserva quella frazione sulle proprie sessioni invece di "
-                  "indovinarla. Misurato su traffico a turno singolo: +1,6 punti e "
-                  "scritture di cache da 25.046 token a 3.967."),
+                  "indovinarla. Misurato su traffico a turno singolo: porta il "
+                  "merito del gateway da -1,6% a -0,2%, cioe' da dannoso a neutro, "
+                  "senza togliere niente alle conversazioni che proseguono."),
         ),
     ),
     Gruppo(

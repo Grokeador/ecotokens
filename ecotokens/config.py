@@ -84,9 +84,10 @@ class CachePlannerSettings(BaseModel):
     # proseguono, e non e' un numero scelto: e' il rapporto fra i due
     # moltiplicatori dell'API.
     #
-    # Il gateway la osserva invece di indovinarla. Finche' le sessioni non
-    # bastano per una frazione stabile - venti - marca, che e' il
-    # comportamento di sempre.
+    # Il gateway la osserva invece di indovinarla, con la media a posteriori
+    # di Jeffreys - `(proseguite + 0,5) / (totali + 1)` - che su cinque
+    # sessioni gia' decide senza decidere sul rumore. Sotto le cinque marca,
+    # che e' il comportamento di sempre.
     adatta_primo_turno: bool = True
     # Saltare il primo turno sembra prudente e invece costa: il pareggio e' a 2
     # richieste, e il prefisso piu' grosso - prompt di sistema e definizioni dei

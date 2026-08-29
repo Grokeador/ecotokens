@@ -1152,5 +1152,67 @@ TUNING_LOG: list[TuningEntry] = [
             "per prefisso e' il passo successivo - non misurato, quindi non fatto."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Le due meta' della sottrazione erano contate con righelli diversi",
+        finding=(
+            "Il prefisso del concorrente veniva dallo stimatore locale, che conta 3,6 "
+            "caratteri per token; `usage` viene dall'API, che ha il proprio "
+            "tokenizzatore - nel simulatore, 4 caratteri. I due numeri finivano nella "
+            "stessa sottrazione, e l'11% di scarto fra i righelli finiva tutto nella "
+            "differenza."
+        ),
+        effect=(
+            "Bastava a far risultare il gateway **dannoso** - -4,6% - su traffico a "
+            "turno singolo, cioe' su un carico comune. Adesso la conversione si "
+            "ricava dal rapporto fra la stima e il conteggio reale dello stesso "
+            "prompt: nessuna costante nuova, e si aggiorna da sola se lo stimatore "
+            "cambia. Vale 1,2 punti."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Si stimava una dimensione che era gia' stata misurata",
+        finding=(
+            "Dove il breakpoint e' andato sul system, `cache_read_tokens` **e'** il "
+            "prefisso stabile contato dall'API: la stessa grandezza che si stava "
+            "stimando, misurata da chi poi la fattura. Il conto usava comunque la "
+            "stima, che sopravvalutava il prefisso del concorrente e quindi il suo "
+            "sconto."
+        ),
+        effect=(
+            "Altri 1,7 punti. Non e' il ragionamento circolare corretto poco prima, "
+            "ed e' una distinzione che vale la pena tenere: quello riguardava il "
+            "**quando** - se il prefisso fosse caldo - e dedurlo dalla nostra "
+            "politica ci premiava per aver smesso di ottimizzare. Questo riguarda il "
+            "**quanto**, ed e' una misura dello stesso oggetto. Si prende il minimo "
+            "fra stima e osservazione, perche' su una conversazione lunga il nostro "
+            "breakpoint copre anche i turni, e accreditarli al concorrente sarebbe "
+            "regalargli il lavoro del gateway."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="La regola sul primo turno aspettava venti sessioni per entrare",
+        finding=(
+            "Il tasso di continuazione veniva restituito solo sopra le venti "
+            "sessioni, e come frazione secca. Su un carico di ventiquattro richieste "
+            "la regola toccava le ultime quattro: meta' del suo effetto restava sul "
+            "tavolo."
+        ),
+        effect=(
+            "La frazione secca su poche sessioni vale zero o uno e decide sul rumore, "
+            "ma la decisione giusta minimizza il **costo atteso**, quindi serve una "
+            "stima della frazione e non un intervallo di confidenza. Con la media a "
+            "posteriori di Jeffreys - `(proseguite + 0,5) / (totali + 1)` - si decide "
+            "da cinque sessioni: con zero continuazioni su cinque da' l'8%, con due "
+            "su cinque il 42%. Insieme alle due correzioni del metro qui sopra, il "
+            "merito del gateway su traffico a turno singolo passa da **-4,6% a "
+            "-0,2%**, e sulle conversazioni che proseguono non cambia niente. Zero e' "
+            "la risposta giusta: li' il gateway fa esattamente cio' che farebbe un "
+            "client accorto, e arrivarci ha richiesto di correggere il metro tre "
+            "volte - ognuna delle quali dava un numero plausibile."
+        ),
+    ),
 
 ]

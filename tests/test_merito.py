@@ -339,3 +339,87 @@ def test_ogni_superficie_mostra_il_merito_non_solo_il_totale():
         assert "baseline_ingenua_usd" in sorgente or "merito" in sorgente.lower(), (
             f"{modulo.__name__} mostra ancora solo il risparmio contro il fantoccio"
         )
+
+
+# --- i tre righelli che hanno dovuto coincidere ---------------------------
+
+
+def test_il_prefisso_del_concorrente_si_conta_nelle_unita_dell_api():
+    """Lo stimatore locale conta 3,6 caratteri per token, l'API ha il suo
+    tokenizzatore. Due righelli diversi nella stessa sottrazione: l'11% di
+    scarto finiva tutto nella differenza, e bastava a far risultare il gateway
+    dannoso su traffico a turno singolo."""
+    from ecotokens.pipeline.base import RequestContext
+    from ecotokens.pipeline.ledger import _prefisso_nelle_unita_dell_api
+    from ecotokens.pricing import Usage
+
+    ctx = RequestContext(
+        request=None,
+        settings=None,
+        store=None,
+        client=None,
+        counter=None,
+        completion_id="t",
+        model="claude-opus-5",
+        params={"system": "x" * 3600, "messages": [{"role": "user", "content": "y" * 360}]},
+        stream=False,
+    )
+    stimato = ctx.stable_prefix_tokens
+    assert stimato > 0
+
+    # L'API conta il 20% in meno dello stimatore: il prefisso va scalato.
+    usage = Usage(input_tokens=int(stimato * 1.1 * 0.8))
+    convertito = _prefisso_nelle_unita_dell_api(ctx, usage)
+    assert convertito < stimato
+
+
+def test_dove_il_prefisso_lo_abbiamo_messo_in_cache_noi_si_usa_la_misura():
+    """`cache_read_tokens` **e'** il prefisso stabile contato da chi lo fattura.
+
+    Non e' il ragionamento circolare corretto poco prima: quello riguardava
+    *quando* il prefisso fosse caldo - e dedurlo dalla nostra politica ci
+    premiava per aver smesso di ottimizzare. Questo riguarda *quanto* e'
+    grande, ed e' una misura dello stesso oggetto.
+    """
+    from ecotokens.pipeline.base import RequestContext
+    from ecotokens.pipeline.ledger import _prefisso_nelle_unita_dell_api
+    from ecotokens.pricing import Usage
+
+    ctx = RequestContext(
+        request=None,
+        settings=None,
+        store=None,
+        client=None,
+        counter=None,
+        completion_id="t",
+        model="claude-opus-5",
+        params={"system": "x" * 4000, "messages": [{"role": "user", "content": "y"}]},
+        stream=False,
+    )
+    # Osservato piu' piccolo della stima: vince l'osservazione.
+    usage = Usage(input_tokens=100, cache_read_tokens=500)
+    assert _prefisso_nelle_unita_dell_api(ctx, usage) == 500
+
+    # Osservato piu' grande - conversazione lunga, il nostro breakpoint copre
+    # anche i turni: il concorrente marca solo il system, e regalargli il resto
+    # sarebbe regalargli il lavoro del gateway.
+    usage_lunga = Usage(input_tokens=100, cache_read_tokens=100_000)
+    assert _prefisso_nelle_unita_dell_api(ctx, usage_lunga) < 100_000
+
+
+async def test_la_stima_del_tasso_decide_da_cinque_sessioni_non_da_venti(client):
+    """La frazione secca su poche sessioni vale zero o uno e decide sul rumore.
+    La media a posteriori di Jeffreys da' l'8% con zero continuazioni su cinque
+    e il 42% con due su cinque: decide prima, e non sul rumore."""
+    store = client.gateway.store
+    assert await store.tasso_continuazione() is None
+
+    for indice in range(5):
+        await store.db.execute(
+            "INSERT INTO sessions (id, fingerprint, model, created_at, updated_at,"
+            " turn_count, message_count) VALUES (?, '', 'claude-opus-5', 0, 0, 1, 1)",
+            (f"sessione-{indice}",),
+        )
+    tasso = await store.tasso_continuazione()
+    assert tasso is not None
+    assert 0.05 < tasso < 0.12, tasso

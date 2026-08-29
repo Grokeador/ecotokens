@@ -107,7 +107,7 @@ tabella [qui sopra](#quanto-aggiunge-a-chi-usa-già-il-caching-automatico).
 
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
-| **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, **+19,9%** a prefisso condiviso; contro uno sviluppatore che marca il proprio system prompt, **+21,1%** su una conversazione che cresce e **−4,6%** su turni singoli — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
+| **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, **+19,9%** a prefisso condiviso; contro uno sviluppatore che marca il proprio system prompt, **+22,6%** su una conversazione che cresce e **−0,2%** su turni singoli — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
 | **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno; ma il profilo predefinito va oltre e lo tiene **sempre** al minimo |
 | **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
@@ -699,17 +699,37 @@ posto suo. Misurato:
 
 | Traffico | Totale vs nessuna cache | di cui Anthropic | di cui EcoTokens |
 |---|---:|---:|---:|
-| una conversazione che cresce, 8 turni | 41,7% | 26,2% | **+21,1%** |
-| molti utenti, stesso system, turno singolo | 25,4% | 29,3% | **−4,6%** |
-| domande che si ripetono | 87,8% | 4,8% | **+87,1%** |
+| una conversazione che cresce, 8 turni | 41,7% | 24,7% | **+22,6%** |
+| molti utenti, stesso system, turno singolo | 26,3% | 26,4% | **−0,2%** |
+| domande che si ripetono | 87,8% | 4,5% | **+87,2%** |
 
-Il segno cambia, e cambia per una ragione precisa. Su una conversazione che
-cresce EcoTokens mette in cache **la conversazione**, non solo il system: è
-esattamente ciò che quel `cache_control` in una riga non fa. Su molti utenti a
-turno singolo l'unica cosa condivisa è il system prompt, che l'altro ha già
-messo in cache da solo: non c'è niente da aggiungere, e il poco che il gateway
-fa in più lo paga. Sulle domande ripetute vince la cache esatta, che non sconta
-il prezzo di un token: lo azzera.
+Su una conversazione che cresce EcoTokens mette in cache **la conversazione**,
+non solo il system: è esattamente ciò che quel `cache_control` in una riga non
+fa. Sulle domande ripetute vince la cache esatta, che non sconta il prezzo di
+un token: lo azzera. Su molti utenti a turno singolo l'unica cosa condivisa è
+il system prompt, che l'altro ha già messo in cache da solo: **non c'è niente
+da aggiungere, e la riga giusta è quella che dice zero**.
+
+Quella riga diceva −4,6%, e ci sono voluti tre passaggi per arrivare allo zero:
+
+1. Il prefisso del concorrente era contato con lo stimatore locale, a 3,6
+   caratteri per token, mentre `usage` arriva dall'API con il suo
+   tokenizzatore. Due righelli diversi nella stessa sottrazione, e l'11% di
+   scarto finiva tutto nella differenza. Ora si converte con il rapporto fra
+   stima e conteggio reale dello stesso prompt: nessuna costante nuova, e si
+   aggiorna da solo se lo stimatore cambia.
+2. Dove il prefisso lo abbiamo messo in cache **noi**, la sua dimensione vera
+   la conosciamo: è `cache_read_tokens`, misurato da chi poi lo fattura. Usare
+   l'osservazione al posto della stima non è il ragionamento circolare corretto
+   poco sopra — quello riguardava *quando* il prefisso fosse caldo, questo
+   riguarda *quanto* è grande, ed è una misura dello stesso oggetto.
+3. Il resto era la regola sul primo turno che aspettava venti sessioni prima di
+   entrare in funzione. Con la media a posteriori di Jeffreys decide da cinque,
+   senza decidere sul rumore.
+
+Il risultato è **zero**, che è la risposta giusta: su quel traffico il gateway
+fa esattamente ciò che fa il concorrente. Arrivarci ha richiesto di correggere
+il metro tre volte, e ognuna delle tre dava un numero plausibile.
 
 La stima è **prudente per costruzione**: il prefisso del concorrente si conta
 con lo stimatore locale, che approssima per eccesso, quindi gli si accredita

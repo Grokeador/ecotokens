@@ -41,9 +41,9 @@ Non teoria: i vincoli che governano il costo di *questa* sessione.
      singola. Il server mette il breakpoint *dopo* la domanda, quindi la voce
      che crea non serve a nessun'altra domanda.
    - contro uno sviluppatore che mette il `cache_control` **sul proprio system
-     prompt** — una riga, ed è la pratica documentata: **+21,1%** su una
-     conversazione che cresce, **−4,6%** su molti utenti a turno singolo,
-     **+87,1%** su domande che si ripetono.
+     prompt** — una riga, ed è la pratica documentata: **+22,6%** su una
+     conversazione che cresce, **−0,2%** su molti utenti a turno singolo,
+     **+87,2%** su domande che si ripetono.
 
    È il terzo che risponde a «conviene installarlo», ed è quello che il
    registro ora calcola su ogni richiesta.

@@ -353,16 +353,27 @@ class Store:
                     del visti[chiave]
         return precedente is not None and adesso - precedente <= self._FINESTRA_PREFISSI
 
-    async def tasso_continuazione(self, minimo: int = 20) -> float | None:
-        """Frazione di conversazioni arrivate almeno al secondo turno.
+    async def tasso_continuazione(self, minimo: int = 5) -> float | None:
+        """Quanto spesso una conversazione arriva almeno al secondo turno.
 
         Risponde alla domanda da cui dipende se convenga marcare la coda di una
         richiesta appena arrivata: quel marker paga 0,25x in piu' subito e
-        risparmia 0,9x **solo se** un turno successivo lo rilegge.
+        risparmia 0,9x **solo se** un turno successivo lo rilegge. Il pareggio
+        e' quindi a 0,25/0,9, e la decisione giusta e' quella che minimizza il
+        costo atteso - per cui serve una **stima della frazione**, non un
+        intervallo di confidenza.
 
-        `None` finche' non ci sono almeno `minimo` conversazioni: su quattro
-        sessioni la frazione oscilla fra 0 e 1 e deciderebbe a caso. Meglio
-        dire "non lo so" e lasciare il comportamento prudente.
+        La frazione grezza pero' su poche sessioni vale zero o uno e
+        deciderebbe sul rumore. Si usa quindi la media a posteriori con prior
+        di Jeffreys, `(proseguite + 0,5) / (totali + 1)`: con zero
+        continuazioni su cinque da' l'8%, con due su cinque il 42%, e converge
+        alla frazione vera man mano che le sessioni arrivano. La decisione si
+        rifa' a ogni richiesta, quindi un'installazione che cambia carattere si
+        corregge da sola.
+
+        La prima versione aspettava venti sessioni e restituiva la frazione
+        secca. Misurato: su traffico a turno singolo la regola arrivava tardi e
+        lasciava sul tavolo la meta' del suo effetto.
         """
         riga = await self.db.query_one(
             """SELECT COUNT(*) AS totali,
@@ -370,9 +381,11 @@ class Store:
                FROM sessions""",
             pesante=True,
         )
-        if not riga or int(riga["totali"] or 0) < minimo:
+        totali = int(riga["totali"] or 0) if riga else 0
+        if totali < minimo:
             return None
-        return float(riga["proseguite"] or 0) / float(riga["totali"])
+        proseguite = float(riga["proseguite"] or 0)
+        return (proseguite + 0.5) / (totali + 1.0)
 
     async def record_usage(
         self,
