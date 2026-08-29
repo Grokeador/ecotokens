@@ -176,10 +176,22 @@ class RequestContext:
     # anche quello salvato, altrimenti un hit servito a un client dell'altro
     # dialetto restituirebbe una risposta della forma sbagliata.
     upstream_response: dict[str, Any] | None = None
+    # Quale client ha mandato questa richiesta, se si e' presentato con una
+    # chiave che ha un nome. Vuoto quando il gateway e' senza chiave o quando
+    # la chiave e' quella anonima: in quel caso non si sa chi sia, e inventare
+    # un nome sarebbe peggio che ammetterlo.
+    #
+    # **Non** si chiama `client`: quello e' gia' il client dell'SDK Anthropic,
+    # poche righe piu' su. Chiamarlo cosi' lo sostituiva - il dataclass accetta
+    # la ridefinizione in silenzio - e la richiesta sarebbe partita verso una
+    # stringa vuota.
+    nome_client: str = ""
 
     def __post_init__(self) -> None:
         if not self.requested_model:
             self.requested_model = self.model
+        if not self.nome_client:
+            self.nome_client = _nome_del_client(self.settings, self.headers)
         if not self.stable_prefix_tokens:
             # Qui, non piu' tardi: fra un istante gli stadi cominciano a
             # riscrivere, e il prefisso di cui si vuole il peso e' quello che
@@ -330,6 +342,26 @@ def copia_parametri(valore: Any, profondita: int = 0) -> Any:
 # poco - un errore isolato non dice che lo stadio sia rotto - ma riprovare
 # all'infinito uno stadio che fallisce sempre paga il salvataggio dei
 # parametri a ogni richiesta senza mai ottenere niente in cambio.
+def _nome_del_client(settings: Any, headers: dict[str, str] | None) -> str:
+    """Il nome associato alla chiave presentata, se ne ha uno.
+
+    La risoluzione sta qui e non nel middleware perche' le rotte passano gia'
+    gli header al contesto: farla una volta sola qui copre da sola entrambe le
+    porte, e una porta aggiunta domani la eredita senza doversene ricordare.
+    """
+    chiavi = getattr(getattr(settings, "server", None), "chiavi", None) or {}
+    if not chiavi or not headers:
+        return ""
+    intestazione = headers.get("authorization", "")
+    token = intestazione[7:] if intestazione.lower().startswith("bearer ") else intestazione
+    if not token:
+        return ""
+    for nome, chiave in chiavi.items():
+        if token == chiave:
+            return nome
+    return ""
+
+
 GUASTI_PRIMA_DI_SPEGNERE = 3
 
 

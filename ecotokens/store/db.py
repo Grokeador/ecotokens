@@ -259,6 +259,9 @@ COLONNE_AGGIUNTE: list[tuple[str, str, str]] = [
     # sommati in una cifra sola: mettere in cache lascia la risposta identica,
     # sostituire il modello no. Zero vuol dire "non registrato".
     ("usage_events", "costo_modello_richiesto_usd", "REAL NOT NULL DEFAULT 0"),
+    # Chi ha mandato la richiesta, quando si e' presentato con una chiave che
+    # ha un nome. Vuoto = non si sa, che e' diverso da "nessuno".
+    ("usage_events", "client", "TEXT NOT NULL DEFAULT ''"),
     ("usage_daily", "costo_modello_richiesto_usd", "REAL NOT NULL DEFAULT 0"),
     ("usage_events", "cache_ttl", "TEXT NOT NULL DEFAULT '5m'"),
     ("bench_runs", "fingerprint", "TEXT NOT NULL DEFAULT ''"),

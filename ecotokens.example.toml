@@ -28,6 +28,13 @@
 profilo = "prudente"
 
 [server]
+# Piu' applicazioni dietro lo stesso gateway. Con una sola chiave anonima non si
+# sa chi ha speso cosa, e un ciclo impazzito consuma il tetto di tutti.
+#
+# [server.chiavi]
+# "applicazione-a" = "una-chiave-lunga-e-casuale"
+# "applicazione-b" = "un-altra-chiave-lunga-e-casuale"
+
 host = "127.0.0.1"
 port = 8000
 # Chiave richiesta ai client in Authorization: Bearer.

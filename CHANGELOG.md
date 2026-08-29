@@ -13,6 +13,16 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ### Nuovo
 
+- **Più client dietro lo stesso gateway.** `[server.chiavi]` associa un nome a
+  ogni chiave: `stats` e `/admin/stats` mostrano quanto ha speso ciascuno, e
+  `[budget] client_daily_usd` (con eccezioni per nome in `tetti_client`) mette
+  un tetto giornaliero per client **oltre** a quello globale, mai al suo posto —
+  dieci client ciascuno sotto il proprio limite sfondano comunque il totale.
+  `api_key` continua a funzionare e vale come client senza nome; una
+  configurazione esistente non va toccata. L'attribuzione per client copre solo
+  il traffico non ancora compattato: `usage_daily` non conserva il nome, e
+  attribuire a qualcuno la spesa di tutti sarebbe peggio che non attribuirla.
+
 - **`ecotokens consiglia`** — legge il traffico già registrato, riconosce quale
   dei quattro regimi misurati gli somiglia (ciclo agentico, domande ripetute,
   chat che cresce, turno singolo) e mette accanto a ogni consiglio **il numero

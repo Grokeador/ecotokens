@@ -26,6 +26,14 @@ class ServerSettings(BaseModel):
     # Se valorizzata, i client devono presentarla in Authorization: Bearer.
     # Non e' la chiave Anthropic: e' la chiave del gateway.
     api_key: str | None = None
+    # Piu' applicazioni dietro lo stesso gateway: nome -> chiave. Con una sola
+    # chiave anonima non si sa chi ha speso cosa, e un ciclo impazzito consuma
+    # il tetto di tutti. I nomi finiscono nel registro accanto a ogni richiesta
+    # e nei tetti di spesa per client.
+    #
+    # `api_key` resta valida e vale come client senza nome: chi ha gia' una
+    # configurazione non deve toccarla.
+    chiavi: dict[str, str] = Field(default_factory=dict)
     log_level: str = "info"
 
 
@@ -412,6 +420,16 @@ class BudgetSettings(BaseModel):
     )
     daily_usd: float = 5.0
     monthly_usd: float = 100.0
+    # Tetto giornaliero per singolo client, oltre a quello globale. Zero =
+    # nessun tetto per client. Si applica a ogni client con un nome; i casi
+    # particolari stanno in `tetti_client`.
+    #
+    # Il tetto globale resta l'ultima difesa e non viene mai sostituito da
+    # questo: sono due domande diverse - "questo client sta esagerando" e
+    # "stiamo esagerando tutti insieme" - e rispondere solo alla prima
+    # lascerebbe passare dieci client ciascuno sotto il proprio limite.
+    client_daily_usd: float = 0.0
+    tetti_client: dict[str, float] = Field(default_factory=dict)
     # Preventivo esatto con count_tokens prima di inviare. Costa una chiamata
     # in piu' (non fatturata) ma evita sforamenti.
     precount: bool = False

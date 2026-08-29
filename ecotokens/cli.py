@@ -483,6 +483,27 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
     table.add_row("Spesa del mese", f"${month:.4f}")
     console.print(table)
 
+    by_client = data.get("by_client") or []
+    if by_client:
+        clienti = Table(title="Per client")
+        clienti.add_column("Client")
+        clienti.add_column("Richieste", justify="right")
+        clienti.add_column("Speso", justify="right")
+        clienti.add_column("Risparmiato", justify="right")
+        for riga in by_client:
+            clienti.add_row(
+                str(riga.get("client") or "-"),
+                f"{int(riga.get('requests') or 0):,}",
+                f"${float(riga.get('cost_usd') or 0):.4f}",
+                f"${float(riga.get('saved_usd') or 0):.4f}",
+            )
+        console.print(clienti)
+        console.print(
+            "[dim]Solo il traffico non ancora compattato: `usage_daily` non "
+            "conserva il nome del client, e attribuire a qualcuno la spesa di "
+            "tutti sarebbe peggio che non attribuirla.[/]"
+        )
+
     by_source = data.get("by_source") or []
     if by_source:
         sources = Table(title="Per origine della risposta")

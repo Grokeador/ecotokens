@@ -217,6 +217,7 @@ class LedgerStage(BaseStage):
             baseline_cost_usd=baseline,
             baseline_ingenua_usd=ctx.baseline_ingenua_usd,
             costo_modello_richiesto_usd=ctx.costo_modello_richiesto_usd,
+            client=ctx.nome_client,
             saved_usd=ctx.saved_usd,
             cache_ttl=ctx.cache_ttl,
             latency_ms=ctx.elapsed_ms,

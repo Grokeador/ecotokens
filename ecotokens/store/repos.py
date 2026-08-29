@@ -399,6 +399,7 @@ class Store:
         saved_usd: float,
         baseline_ingenua_usd: float = 0.0,
         costo_modello_richiesto_usd: float = 0.0,
+        client: str = "",
         cache_ttl: str = "5m",
         latency_ms: float | None = None,
         notes: list[str] | None = None,
@@ -422,8 +423,8 @@ class Store:
                 cache_creation_tokens, cache_read_tokens, cache_ttl, cost_usd,
                 baseline_cost_usd, saved_usd, latency_ms, notes,
                 stages, overhead_tokens, aux_cost_usd, client_format,
-                baseline_ingenua_usd, costo_modello_richiesto_usd)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                baseline_ingenua_usd, costo_modello_richiesto_usd, client)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 ts,
@@ -447,8 +448,25 @@ class Store:
                 client_format,
                 float(baseline_ingenua_usd),
                 float(costo_modello_richiesto_usd),
+                client,
             ),
         )
+
+    async def spesa_del_client(self, client: str, column: str, value: str) -> float:
+        """Spesa di un client nel giorno o nel mese indicato.
+
+        Solo `usage_events`: le righe compattate in `usage_daily` perdono il
+        nome del client, e sommarle a tutti darebbe a ciascuno la spesa di
+        tutti. Il tetto per client vale quindi sulla finestra non ancora
+        compattata - che e' quella recente, cioe' l'unica su cui un tetto
+        giornaliero abbia senso.
+        """
+        riga = await self.db.query_one(
+            f"SELECT COALESCE(SUM(cost_usd), 0) AS spesa FROM usage_events "
+            f"WHERE client = ? AND {column} = ?",
+            (client, value),
+        )
+        return float(riga["spesa"]) if riga else 0.0
 
     async def spend_since(self, column: str, value: str) -> float:
         """Spesa effettiva nel giorno o nel mese indicato."""
@@ -469,6 +487,11 @@ class Store:
         """(spesa di oggi, spesa del mese corrente) in dollari."""
         day, month = _day_month(_now())
         return await self.spend_since("day", day), await self.spend_since("month", month)
+
+    async def spesa_di_oggi_del_client(self, client: str) -> float:
+        """Quanto ha speso oggi un singolo client."""
+        day, _ = _day_month(_now())
+        return await self.spesa_del_client(client, "day", day)
 
     # Dettaglio e riepiloghi in una vista sola. Dopo `compatta_consumi` una
     # parte della storia vive in `usage_daily` e il resto in `usage_events`:
@@ -529,6 +552,17 @@ class Store:
                FROM ({self._CONSUMI})""",
             pesante=True,
         )
+        # Per client: solo da `usage_events`, per la stessa ragione di
+        # `spesa_del_client` - la compattazione perde il nome, e attribuire a
+        # qualcuno la spesa di tutti e' peggio che non attribuirla.
+        by_client = await self.db.query(
+            """SELECT client, COUNT(*) AS requests,
+                      COALESCE(SUM(cost_usd), 0)  AS cost_usd,
+                      COALESCE(SUM(saved_usd), 0) AS saved_usd
+               FROM usage_events WHERE client <> '' GROUP BY client
+               ORDER BY cost_usd DESC""",
+            pesante=True,
+        )
         by_source = await self.db.query(
             f"""SELECT source, SUM(requests) AS requests,
                       COALESCE(SUM(saved_usd), 0) AS saved_usd
@@ -562,6 +596,7 @@ class Store:
             int(result.get("cache_read_tokens", 0)) / prompt_tokens if prompt_tokens else 0.0
         )
         result["by_source"] = [dict(row) for row in by_source]
+        result["by_client"] = [dict(row) for row in by_client]
         result["by_model"] = [dict(row) for row in by_model]
         result["by_day"] = [dict(row) for row in by_day]
         return result

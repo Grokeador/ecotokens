@@ -1314,5 +1314,24 @@ TUNING_LOG: list[TuningEntry] = [
             "controllo che doveva sostenere."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Un campo nuovo chiamato `client` avrebbe sostituito il client dell'SDK",
+        finding=(
+            "Aggiungendo l'attribuzione per client, il campo del contesto e' "
+            "stato chiamato `client`. In `RequestContext` esisteva gia' un campo "
+            "`client`: il client Anthropic. Un dataclass accetta la "
+            "ridefinizione **in silenzio**, e la richiesta sarebbe partita verso "
+            "una stringa vuota."
+        ),
+        effect=(
+            "Rinominato `nome_client`. Si e' visto solo perche' la ridefinizione "
+            "ha spostato il campo dopo un argomento senza default e Python ha "
+            "protestato per l'ordine: senza quella coincidenza sarebbe passato, e "
+            "il guasto sarebbe apparso a runtime lontano dalla causa. Vale come "
+            "promemoria che in una dataclass grande i nomi sono uno spazio "
+            "condiviso, e che il rumore di un errore all'import e' un regalo."
+        ),
+    ),
 
 ]

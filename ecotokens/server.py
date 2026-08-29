@@ -363,14 +363,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         `/health` resta fuori apposta, perche' serve a sapere se il processo e'
         vivo e non dice niente di nessuno.
         """
-        expected = settings.server.api_key
+        expected = settings.server.api_key or next(
+            iter(settings.server.chiavi.values()), None
+        )
         protetto = request.url.path in {"/", "/ui", "/quadro", "/impostazioni"} or request.url.path.startswith(
             ("/v1", "/admin")
         )
         if expected and protetto:
             header = request.headers.get("authorization", "")
             token = header[7:] if header.lower().startswith("bearer ") else header
-            if token != expected:
+            valide = {expected, *settings.server.chiavi.values()}
+            if token not in valide:
                 return JSONResponse(
                     status_code=401,
                     content=error_payload(
