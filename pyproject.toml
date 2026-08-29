@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ecotokens"
-version = "0.1.0"
+version = "0.2.0"
 # Non "gateway OpenAI-compatibile": parla **solo** con Anthropic, e accetta il
 # dialetto OpenAI in ingresso perche' cosi' le applicazioni esistenti non si
 # riscrivono. Dirlo al contrario e' il malinteso che il progetto si e' imposto

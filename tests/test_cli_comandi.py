@@ -158,8 +158,16 @@ def test_la_versione_e_una_sola():
     dichiarata = tomllib.loads(P("pyproject.toml").read_text(encoding="utf-8"))
     assert __version__ == dichiarata["project"]["version"]
 
-    sorgente = P("ecotokens/server.py").read_text(encoding="utf-8")
-    assert '"0.1.0"' not in sorgente, "versione ricomparsa a mano nel server"
+    # Il controllo cerca **la versione corrente**, non una vecchia scritta a
+    # mano nel test: cercare "0.1.0" per sempre significa smettere di
+    # accorgersi del difetto al primo cambio di versione, cioe' esattamente
+    # quando il difetto puo' ricomparire.
+    import re
+
+    for percorso in ("ecotokens/server.py", "ecotokens/cli.py", "ecotokens/console.py"):
+        sorgente = P(percorso).read_text(encoding="utf-8")
+        numeri = re.findall(r'"(\d+\.\d+\.\d+)"', sorgente)
+        assert not numeri, f"versione scritta a mano in {percorso}: {numeri}"
 
 
 def test_health_riporta_la_versione_del_pacchetto(client):
