@@ -11,6 +11,22 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ## [Non rilasciato]
 
+### Nuovo
+
+- **Il caso agentico ha i suoi test.** La porta nativa `/v1/messages` era
+  documentata come «non provato» proprio mentre il carico agentico era il caso
+  migliore misurato del progetto (+52%). Ora `tests/test_agentico.py` passa una
+  traccia di venti turni con catene `tool_use`/`tool_result` e blocchi di
+  pensiero, con la compattazione forzata a tagliare l'80% della conversazione, e
+  verifica che il protocollo resti intatto: nessun `tool_result` orfano, nessun
+  id riscritto, nessun pensiero alterato, mai più di quattro breakpoint.
+- `ecotokens verifica --live` ha un sesto controllo, `_ciclo_agentico`: tre
+  turni per confermare che le riletture di cache crescano man mano che la
+  conversazione si allunga. Il preventivo passa da 9 a **12 chiamate**.
+- `ecotokens assunzioni` ne elenca **12** invece di 11. La nuova è quella su cui
+  poggia il +52%, e non era dichiarata: che il prefisso di conversazione regga
+  fra un turno e il successivo.
+
 ### Rotture
 
 - **Il profilo predefinito è ora `prudente`, era `aggressivo`.** Chi non ha un

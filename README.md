@@ -45,15 +45,25 @@ un'installazione.
 Due domande decidono.
 
 **Paghi a token, o paghi un abbonamento?** Il gateway riduce token. Token che
-non ti vengono fatturati singolarmente non hanno un prezzo da abbassare: se usi
-Claude Code o un altro client con un abbonamento a quota fissa, non c'è niente
-da risparmiare.
+non ti vengono fatturati singolarmente non hanno un prezzo da abbassare: con un
+abbonamento a quota fissa non c'è niente da risparmiare.
+
+Non fermarti però al nome del client. Lo stesso assistente di codice può girare
+a quota fissa **oppure** a consumo, secondo come è configurato: se paga a token,
+non è un caso da scartare — è quello in cui questo gateway vale **di più**, per
+la ragione spiegata nella domanda qui sotto.
 
 **Molte richieste che condividono un prefisso, o una conversazione sola che
 cresce?** È la domanda che separa il 6% dall'82%. Dove molte richieste diverse
 stanno sopra lo stesso prompt di sistema, il gateway crea una voce di cache che
 tutte rileggono. Dove c'è una sola conversazione lunga, il caching automatico
 di Anthropic fa già quasi tutto da solo.
+
+Il caso migliore però è un terzo, ed è quello di un **agente che chiama tool a
+ripetizione**: lì i risultati dei tool pesano molto più del prompt di sistema,
+quindi chi si limita a marcare il proprio `system` cattura il 3% e lascia il
+resto sul tavolo. Il prefisso che conta è la *conversazione*, e marcarla bene
+richiede di sapere dov'è cresciuta.
 
 ### Quanto aggiunge a chi usa già il caching automatico
 
@@ -617,8 +627,17 @@ l'intervallo.
 *(La riga qui sopra è un esempio di forma, non una misura: senza credenziali il
 campione è vuoto.)*
 
-*Non provato:* in teoria un client nativo configurabile via `ANTHROPIC_BASE_URL`
-potrebbe passare dal gateway. Non l'ho verificato con nessuno in particolare.
+*Sul client nativo:* un client configurabile via `ANTHROPIC_BASE_URL` passa dalla
+porta `/v1/messages`, che ora ha i suoi test di conformità su una traccia
+agentica di venti turni — catene `tool_use`/`tool_result`, blocchi di pensiero,
+compattazione forzata a tagliare l'80% della conversazione. Verificano che il
+gateway non rompa il protocollo, e nella condizione peggiore: `tests/test_agentico.py`.
+
+Resta non verificato **contro l'API vera**. Il controllo c'è ed è pronto
+(`ecotokens verifica --live`, controllo `_ciclo_agentico`): tre turni, e guarda
+che le riletture crescano. Finché non gira con una chiave, il +52% del carico
+agentico poggia su un'assunzione dichiarata e non verificata — è la dodicesima
+voce di `ecotokens assunzioni`, e non c'era finché non l'ho cercata.
 
 ### Calibrare contro l'API vera
 

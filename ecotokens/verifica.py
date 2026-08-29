@@ -309,17 +309,84 @@ async def _troppi_breakpoint(client, modello: str) -> Controllo:
     )
 
 
+async def _ciclo_agentico(client, modello: str) -> Controllo:
+    """L'assunzione da cui dipende il numero piu' alto del progetto.
+
+    Il +52% su un ciclo agentico si regge su una cosa sola: che marcare la
+    **conversazione** - non solo il `system` - produca riletture che crescono
+    turno dopo turno, man mano che i risultati dei tool si accumulano. Se il
+    prefisso non reggesse fra un turno e il successivo, quel numero sarebbe
+    solo un artefatto del simulatore.
+
+    Tre turni bastano: la prima richiesta scrive, la seconda deve rileggere, la
+    terza deve rileggere **di piu'**.
+    """
+    corpo = _riempi(4_000)
+    storia: list[dict[str, Any]] = []
+    letture: list[int] = []
+
+    def blocco(testo: str) -> list[dict[str, Any]]:
+        return [{"type": "text", "text": testo}]
+
+    for indice in range(3):
+        # La storia resta **sempre** in forma a blocchi. Tenerla come stringa e
+        # convertirla solo per l'ultimo messaggio cambierebbe la forma del
+        # prefisso a ogni turno, e nessuna rilettura avverrebbe mai: e' il
+        # primo modo in cui questo controllo e' stato scritto, e falliva.
+        #
+        # Il testo grosso sta **gia' nel primo turno**: con una prima domanda
+        # corta il prefisso resterebbe sotto la soglia minima del modello, non
+        # verrebbe scritta nessuna voce, e la prima rilettura slitterebbe al
+        # terzo turno. Si misurerebbe la soglia invece della tenuta.
+        storia = storia + [
+            {"role": "user", "content": blocco(f"passo {indice}: {corpo}")}
+        ]
+
+        # Il breakpoint va in fondo alla conversazione, che e' precisamente
+        # cio' che un client che marca solo il proprio system prompt non fa.
+        messaggi = [dict(m) for m in storia]
+        messaggi[-1] = {
+            "role": "user",
+            "content": [
+                {**messaggi[-1]["content"][0], "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+        messaggio = await client.messages.create(
+            model=modello, max_tokens=16, messages=messaggi
+        )
+        letture.append(_usage(messaggio)["cache_read_input_tokens"])
+        storia = storia + [
+            {"role": "assistant", "content": blocco("fatto")},
+            {"role": "user", "content": blocco(f"risultato del tool: {corpo}")},
+        ]
+
+    cresce = letture[2] > letture[1] > 0
+    return Controllo(
+        assunzione="Il prefisso di conversazione regge fra i turni",
+        atteso="le riletture crescono a ogni turno",
+        osservato=f"riletture: {letture[0]}, {letture[1]}, {letture[2]}",
+        esito=COMBACIA if cresce else DIVERGE,
+        nota=(
+            "E' l'assunzione su cui poggia il +52% del carico agentico, il "
+            "numero piu' alto che il progetto dichiara. Se diverge, quel "
+            "numero va tolto dal README prima di ogni altra cosa."
+        ),
+        chiamate=3,
+    )
+
+
 CONTROLLI = (
     _soglia_di_cache,
     _rilettura_di_cache,
     _parametri_rifiutati,
     _troppi_breakpoint,
     _effetto_effort,
+    _ciclo_agentico,
 )
 
 # Quante chiamate costa l'intera verifica. Dichiarato prima di eseguirla:
 # un comando che spende deve dire quanto prima di spendere.
-CHIAMATE_PREVISTE = 9
+CHIAMATE_PREVISTE = 12
 
 
 async def verifica(client, modello: str, *, circolare: bool = False) -> Rapporto:
@@ -350,6 +417,7 @@ def nomi_coperti() -> set[str]:
         "I parametri rimossi danno 400",
         "Quattro breakpoint al massimo",
         "Effetto dell'effort sui token generati",
+        "Il prefisso di conversazione regge fra i turni",
     }
 
 

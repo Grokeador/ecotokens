@@ -207,6 +207,30 @@ ASSUNZIONI: list[Assunzione] = [
         ),
         come_verificarla="`--live`: la lunghezza media reale del carico dell'utente.",
     ),
+    Assunzione(
+        nome="Il prefisso di conversazione regge fra i turni",
+        valore=(
+            "un breakpoint in fondo alla conversazione viene riletto al turno "
+            "successivo, e la rilettura cresce man mano che la storia si allunga"
+        ),
+        fonte=DICHIARATA,
+        dove="pipeline.cache_planner, simulator",
+        cosa_cambia=(
+            "Il **+52%** sul ciclo agentico, cioè il numero più alto che il "
+            "progetto dichiara, e con esso l'intera tesi su cosa distingue "
+            "questo gateway da un `cache_control` sul proprio system prompt: "
+            "che a contare sia la *conversazione*, non il prefisso fisso. Se il "
+            "prefisso non reggesse fra un turno e il successivo, si pagherebbe "
+            "una scrittura per turno senza mai rileggere — cioè il gateway "
+            "sarebbe dannoso proprio sul carico che dichiara come migliore. "
+            "Era data per vera senza essere enumerata, il che è peggio che "
+            "darla per vera dichiarandolo."
+        ),
+        come_verificarla=(
+            "`ecotokens verifica --live`: il controllo `_ciclo_agentico` fa tre "
+            "turni e guarda che `cache_read_input_tokens` cresca."
+        ),
+    ),
 ]
 
 

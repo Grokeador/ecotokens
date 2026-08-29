@@ -1289,5 +1289,30 @@ TUNING_LOG: list[TuningEntry] = [
             "`costo_modello_richiesto_usd` separa le due meta' ovunque."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Il numero piu' alto del progetto poggiava su un'assunzione mai enumerata",
+        finding=(
+            "Il +52% sul ciclo agentico si regge su una cosa sola: che marcare la "
+            "**conversazione** produca riletture che crescono turno dopo turno. "
+            "Quella proprieta' non era fra le undici assunzioni dichiarate. Era "
+            "data per vera senza essere elencata, il che e' peggio che darla per "
+            "vera dichiarandolo: il registro delle assunzioni esiste proprio per "
+            "impedire che una premessa scompaia dalla vista, e la premessa piu' "
+            "importante gli era sfuggita."
+        ),
+        effect=(
+            "Aggiunta come dodicesima voce, e con essa il controllo "
+            "`verifica._ciclo_agentico` che la mette alla prova in tre chiamate. "
+            "Scritto la prima volta sbagliato, e il simulatore l'ha smentito con "
+            "`riletture: 0, 0, 0`: la storia veniva tenuta come stringa e "
+            "convertita in blocchi solo per l'ultimo messaggio, quindi il "
+            "prefisso cambiava forma a ogni turno. Corretto, osserva "
+            "`0, 3613, 10858`. Vale come promemoria che un controllo nuovo va "
+            "guardato mentre fallisce prima di fidarsi di quando passa - e come "
+            "prova che il simulatore, per una volta, era piu' severo del "
+            "controllo che doveva sostenere."
+        ),
+    ),
 
 ]
