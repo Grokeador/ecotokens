@@ -53,8 +53,33 @@ class StreamTranslator:
         self._role_sent = True
         return sse(self._chunk({"role": "assistant", "content": ""}))
 
+    @property
+    def interrotto(self) -> bool:
+        """Vero se il turno non ha mai detto di essere finito.
+
+        ``stop_reason`` arriva in ``message_delta``, che e' il penultimo
+        evento: se non e' mai arrivato, lo stream si e' chiuso a meta'. E'
+        una distinzione che costa una riga e vale molto, perche' il valore
+        predefinito di `finish_reason` e' ``"stop"``: senza questa proprieta'
+        una risposta tagliata viene consegnata al client con l'etichetta di
+        risposta completa, cioe' indistinguibile da quella giusta.
+        """
+        return self.stop_reason is None
+
     def final_chunk(self) -> str:
         return sse(self._chunk({}, finish_reason(self.stop_reason)))
+
+    def chunk_interrotto(self, messaggio: str) -> str:
+        """Chiusura di uno stream che si e' rotto per strada.
+
+        ``finish_reason`` resta ``null``: nessuno dei quattro valori previsti
+        da OpenAI - stop, length, tool_calls, content_filter - descrive
+        "la connessione e' caduta", e sceglierne uno sarebbe sostituire una
+        bugia comoda a un'informazione mancante.
+        """
+        payload = self._chunk({}, None)
+        payload["error"] = {"type": "api_error", "message": messaggio}
+        return sse(payload)
 
     def usage_chunk(self, meta: dict[str, Any] | None = None) -> str:
         payload = {

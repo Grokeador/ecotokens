@@ -73,7 +73,12 @@ class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     model: str | None = None
-    messages: list[ChatMessage] = Field(default_factory=list)
+    # Obbligatorio, e con almeno un messaggio. Con un valore predefinito
+    # pydantic non lo valida affatto - `validate_default` e' spento - quindi
+    # un corpo vuoto passava come conversazione vuota e arrivava fino
+    # all'API. Rifiutarlo qui risparmia un giro di rete e da' un errore che
+    # parla della richiesta scritta invece che di quella tradotta.
+    messages: list[ChatMessage] = Field(min_length=1)
     stream: bool = False
     stream_options: StreamOptions | None = None
 

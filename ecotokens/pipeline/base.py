@@ -12,6 +12,7 @@ che ha modificato la richiesta e' quindi il primo a poter osservare l'esito.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -33,6 +34,8 @@ SOURCE_SEMANTIC_CACHE = "semantic_cache"
 # lo parlano gia' e non hanno bisogno di nessuna traduzione.
 FORMAT_OPENAI = "openai"
 FORMAT_ANTHROPIC = "anthropic"
+
+logger = logging.getLogger("ecotokens.pipeline")
 
 
 class PipelineAbort(Exception):
@@ -135,6 +138,12 @@ class RequestContext:
     # prima di eseguire gli stadi `after`: gli stadi di cache la salvano da
     # qui. Il formato e' quello della porta d'ingresso, non quello interno.
     client_response: dict[str, Any] | None = None
+    # Vero quando la risposta e' arrivata **tagliata**: lo stream si e' chiuso
+    # senza dire di essere finito. Il prompt e' gia' stato pagato per intero,
+    # quindi la spesa va contata; ma la risposta non va ne' messa in cache ne'
+    # usata per estrarre fatti da ricordare, o un guasto momentaneo di rete
+    # diventerebbe permanente - servito uguale a ogni richiesta successiva.
+    risposta_incompleta: bool = False
     # La stessa risposta in formato Anthropic: e' questa che finisce in
     # cache. Il formato interno del gateway e' uno solo, e deve esserlo
     # anche quello salvato, altrimenti un hit servito a un client dell'altro
@@ -210,6 +219,19 @@ class BaseStage:
 
     name = "stage"
     enabled = True
+    # Se lo stadio **riscrive** ``ctx.params`` invece di limitarsi a leggerli.
+    #
+    # Governa il salvataggio che permette di annullare il lavoro di uno stadio
+    # che si rompe a meta'. Copiare i parametri costa da 0,03 ms a 0,89 ms
+    # secondo la lunghezza della conversazione (misurato, copia ricorsiva:
+    # `copy.deepcopy` costa quattro volte tanto), e farlo attorno a ogni
+    # stadio invece che una volta sola vorrebbe dire pagarlo otto volte per
+    # una richiesta - un quarto del tempo di CPU dell'intero gateway.
+    #
+    # La dichiarazione non e' una promessa sulla parola: `test_guasti.py`
+    # esegue ogni stadio e verifica che chi dichiara di non riscrivere non
+    # riscriva.
+    riscrive = False
 
     async def before(self, ctx: RequestContext) -> None:  # pragma: no cover - default
         return None
@@ -218,9 +240,146 @@ class BaseStage:
         return None
 
 
+# Quanto puo' essere annidata una richiesta perche' il gateway la sappia
+# salvare. Un prompt vero non supera i cinque o sei livelli: cento e' gia'
+# molto oltre il ragionevole, e sta molto sotto il limite di ricorsione
+# dell'interprete, che a 500 livelli si arrende con un RecursionError.
+PROFONDITA_MASSIMA = 100
+
+
+class TroppoAnnidato(ValueError):
+    """La richiesta e' annidata piu' a fondo di quanto si possa copiare."""
+
+
+def copia_parametri(valore: Any, profondita: int = 0) -> Any:
+    """Copia i parametri isolando le strutture ma condividendo le stringhe.
+
+    I parametri di una richiesta sono dati in forma JSON - dizionari, liste,
+    stringhe, numeri - e per quella forma questa ricorsione costa **un quarto**
+    di ``copy.deepcopy``, che deve occuparsi di oggetti arbitrari, riferimenti
+    ciclici e tabelle di memoizzazione che qui non servono a niente.
+
+    Le stringhe non si copiano: sono immutabili, e sono quasi tutto il peso.
+
+    Il limite di profondita' non e' una cautela generica. Una ricorsione su
+    dati che arrivano da fuori e' una via di guasto **aperta da chi la
+    scrive**: un client che manda un contenuto annidato cinquecento volte
+    esaurisce lo stack, e il RecursionError arriverebbe da un punto in cui non
+    c'e' niente da fare. Contare mentre si copia costa un confronto per nodo
+    e trasforma un errore dell'interprete in una decisione del gateway.
+    """
+    if profondita > PROFONDITA_MASSIMA:
+        raise TroppoAnnidato(
+            f"richiesta annidata oltre {PROFONDITA_MASSIMA} livelli"
+        )
+    if type(valore) is dict:
+        return {
+            chiave: copia_parametri(v, profondita + 1) for chiave, v in valore.items()
+        }
+    if type(valore) is list:
+        return [copia_parametri(v, profondita + 1) for v in valore]
+    return valore
+
+
+# Quanti guasti di fila prima di spegnere uno stadio. Uno solo sarebbe troppo
+# poco - un errore isolato non dice che lo stadio sia rotto - ma riprovare
+# all'infinito uno stadio che fallisce sempre paga il salvataggio dei
+# parametri a ogni richiesta senza mai ottenere niente in cambio.
+GUASTI_PRIMA_DI_SPEGNERE = 3
+
+
 class Pipeline:
-    def __init__(self, stages: list[BaseStage]) -> None:
+    """Gli stadi, in ordine, con la regola che li governa quando si rompono.
+
+    **Un guasto interno degrada, non abbatte.** Il gateway sta in mezzo fra
+    un'applicazione e l'API: se un suo stadio ha un bug, la richiesta deve
+    partire come sarebbe partita senza quello stadio - piu' cara, non fallita.
+    Un ottimizzatore che puo' far fallire cio' che ottimizza non e' un
+    ottimizzatore rischioso: e' un guasto in piu' che prima non c'era.
+
+    L'unica eccezione e' ``PipelineAbort``, che non e' un guasto ma una
+    decisione: e' cosi' che il tetto di spesa dice di no, e deve continuare a
+    poterlo dire.
+    """
+
+    def __init__(
+        self,
+        stages: list[BaseStage],
+        *,
+        guasti_prima_di_spegnere: int = GUASTI_PRIMA_DI_SPEGNERE,
+    ) -> None:
         self.stages = stages
+        self.guasti_prima_di_spegnere = guasti_prima_di_spegnere
+        # Nome dello stadio -> cosa gli e' successo. Degradare in silenzio e'
+        # l'altro modo di sbagliare: uno stadio spento da un bug continuerebbe
+        # a risultare acceso, e il risparmio mancante verrebbe attribuito a
+        # chissa' che cosa.
+        self.guasti: dict[str, dict[str, Any]] = {}
+
+    # -- guasti -----------------------------------------------------------
+
+    def _registra_guasto(
+        self, stage: BaseStage, errore: Exception, ctx: RequestContext, dove: str
+    ) -> None:
+        voce = self.guasti.setdefault(
+            stage.name,
+            {"conteggio": 0, "consecutivi": 0, "ultimo": "", "spento": False, "dove": dove},
+        )
+        voce["conteggio"] += 1
+        # I due agganci si contano separati. Uno stadio rotto in `before` ha
+        # quasi sempre un `after` che non fa niente e quindi riesce: contarli
+        # insieme lascerebbe il conteggio consecutivo a zero per sempre, e lo
+        # stadio rotto non verrebbe mai spento. E' il test dello spegnimento
+        # ad averlo trovato, non la lettura del codice.
+        if voce["dove"] != dove:
+            voce["dove"] = dove
+            voce["consecutivi"] = 0
+        voce["consecutivi"] += 1
+        voce["ultimo"] = f"{type(errore).__name__}: {errore}"
+        logger.warning(
+            "stadio %s: %s (guasto n. %d)", stage.name, voce["ultimo"], voce["conteggio"]
+        )
+        if voce["consecutivi"] >= self.guasti_prima_di_spegnere and not voce["spento"]:
+            stage.enabled = False
+            voce["spento"] = True
+            logger.error(
+                "stadio %s disattivato dopo %d guasti consecutivi",
+                stage.name,
+                voce["consecutivi"],
+            )
+        # Al client arriva **che** lo stadio non ha lavorato, non perche': il
+        # testo di un'eccezione interna puo' contenere percorsi, query e
+        # frammenti di configurazione, e la risposta esce dal gateway. Il
+        # dettaglio resta nel log e in `pipeline.guasti`.
+        ctx.note(f"stadio {stage.name} non applicato: guasto interno")
+
+    def _successo(self, stage: BaseStage, dove: str) -> None:
+        """Azzera la serie, ma solo per l'aggancio che e' andato a buon fine."""
+        voce = self.guasti.get(stage.name)
+        if voce and voce["consecutivi"] and voce["dove"] == dove:
+            voce["consecutivi"] = 0
+
+    # -- salvataggio e ripristino ------------------------------------------
+
+    def _istantanea(self, ctx: RequestContext) -> dict[str, Any]:
+        return {
+            "params": copia_parametri(ctx.params),
+            "model": ctx.model,
+            "cache_ttl": ctx.cache_ttl,
+            "betas": list(ctx.betas),
+        }
+
+    def _ripristina(self, ctx: RequestContext, istantanea: dict[str, Any]) -> None:
+        ctx.params = copia_parametri(istantanea["params"])
+        ctx.model = istantanea["model"]
+        ctx.cache_ttl = istantanea["cache_ttl"]
+        ctx.betas = list(istantanea["betas"])
+        # Uno stadio puo' essersi rotto **dopo** aver deciso di servire da
+        # cache: quella decisione va annullata come tutto il resto, o si
+        # restituirebbe una risposta scelta da un'esecuzione mai finita.
+        ctx.short_circuit = None
+
+    # -- esecuzione --------------------------------------------------------
 
     async def before(self, ctx: RequestContext) -> None:
         ctx.stages_enabled = [
@@ -229,17 +388,70 @@ class Pipeline:
         for stage in self.stages:
             if not getattr(stage, "enabled", True):
                 continue
+            # Una copia per **ogni** stadio che riscrive, non una per
+            # richiesta: cosi' uno stadio che si rompe perde soltanto il
+            # proprio lavoro, e la compattazione non viene buttata perche' il
+            # pianificatore di cache, tre righe dopo, ha un bug.
+            #
+            # La prima versione ne faceva una sola, per un conto a tavolino
+            # che dava il costo per stadio troppo alto. Misurato: la
+            # differenza fra protetto e non protetto sta **sotto il rumore**
+            # dello strumento a 0, 10 e 40 turni, perche' il conto rapportava
+            # la copia al tempo di CPU di una richiesta corta invece che a
+            # quello di una richiesta lunga, cioe' proprio quella in cui la
+            # copia costa. Gli stadi che leggono soltanto non la pagano.
             prima = len(ctx.notes)
-            await stage.before(ctx)
+            istantanea = None
+            try:
+                # Dentro il `try`, non prima: anche il salvataggio puo'
+                # fallire - su una richiesta annidata oltre ogni limite - e un
+                # gateway che muore mentre prepara la propria rete di
+                # sicurezza sarebbe il modo piu' ironico di rompersi.
+                istantanea = (
+                    self._istantanea(ctx) if getattr(stage, "riscrive", False) else None
+                )
+                await stage.before(ctx)
+            except PipelineAbort:
+                # Non e' un guasto: e' uno stadio che fa il suo mestiere.
+                raise
+            except Exception as errore:
+                # Le note gia' scritte dallo stadio descrivono un lavoro che
+                # sta per essere annullato: tenerle significherebbe dichiarare
+                # al client un'ottimizzazione che non c'e'.
+                del ctx.notes[prima:]
+                # Resta `None` se a fallire e' stato il salvataggio stesso:
+                # in quel caso lo stadio non e' nemmeno partito, e non c'e'
+                # niente da annullare.
+                if istantanea is not None:
+                    self._ripristina(ctx, istantanea)
+                else:
+                    ctx.short_circuit = None
+                self._registra_guasto(stage, errore, ctx, "before")
+                ctx.attribuisci(stage.name, ctx.notes[prima:])
+                continue
+
+            self._successo(stage, "before")
             ctx.attribuisci(stage.name, ctx.notes[prima:])
             if ctx.short_circuit is not None:
                 # Un hit di cache rende inutile tutto il resto della catena.
                 return
 
     async def after(self, ctx: RequestContext, message: Any | None) -> None:
+        # Qui nessun salvataggio: la richiesta e' gia' partita e i parametri
+        # non servono piu' a nessuno. Uno stadio che si rompe dopo la risposta
+        # perde il proprio lavoro - una riga di registro, un fatto da
+        # ricordare - senza poter danneggiare la risposta gia' pagata.
         for stage in reversed(self.stages):
             if not getattr(stage, "enabled", True):
                 continue
             prima = len(ctx.notes)
-            await stage.after(ctx, message)
+            try:
+                await stage.after(ctx, message)
+            except PipelineAbort:
+                raise
+            except Exception as errore:
+                del ctx.notes[prima:]
+                self._registra_guasto(stage, errore, ctx, "after")
+            else:
+                self._successo(stage, "after")
             ctx.attribuisci(stage.name, ctx.notes[prima:])

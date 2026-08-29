@@ -31,6 +31,17 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .pricing import model_info
 
 
+# Lunghezza di una risposta tipica, prima dell'effetto dell'effort. **E' un
+# modello dichiarato**, e sposta il peso relativo di prompt e output in ogni
+# misura: con risposte piu' lunghe il risparmio percentuale del gateway scende,
+# perche' tutte le sue leve agiscono sul prompt e nessuna sull'output.
+#
+# Sta qui, a livello di modulo, invece che dentro `__init__`: e' un'assunzione
+# sul comportamento dell'API, e le assunzioni devono stare dove un test possa
+# accorgersi che esistono (vedi `ecotokens/assunzioni.py`).
+OUTPUT_TIPICO = 600
+
+
 class StubState:
     """Memoria dello stub: richieste ricevute e prefissi in cache."""
 
@@ -44,13 +55,27 @@ class StubState:
         self.tool_calls: list[dict[str, Any]] = []
         self.stop_reason = "end_turn"
         # Token di output di un turno tipico, prima dell'effetto dell'effort.
-        self.base_output_tokens = 600
+        self.base_output_tokens = OUTPUT_TIPICO
+        # Guasti a comando. Il gateway sta **in mezzo**: cosa fa quando cio'
+        # che ha a monte si rompe conta quanto cosa fa quando funziona, e
+        # finora lo stub sapeva solo funzionare.
+        #
+        # `guasti` e' una coda di codici di stato consumata una richiesta alla
+        # volta: cosi' si prova anche il caso che conta di piu', cioe' il
+        # guasto **transitorio**, dove il secondo tentativo va a buon fine.
+        self.guasti: list[int] = []
+        # Chiude lo stream dopo N eventi, senza `message_stop`. E' la rottura
+        # a meta' risposta: il client ha gia' ricevuto del testo e il prompt
+        # e' gia' stato pagato per intero.
+        self.interrompi_stream_dopo: int | None = None
 
     def reset(self) -> None:
         self.requests.clear()
         self.count_requests.clear()
         self.cached_prefixes.clear()
         self.tool_calls.clear()
+        self.guasti.clear()
+        self.interrompi_stream_dopo = None
         self.reply_text = "Risposta di prova."
         self.stop_reason = "end_turn"
 
@@ -66,6 +91,37 @@ class StubState:
 # Distanza massima, in blocchi di contenuto, entro cui un breakpoint riesce a
 # trovare una voce di cache scritta in precedenza.
 LOOKBACK_BLOCKS = 20
+
+# Quanti blocchi possono portare `cache_control` in una richiesta. Il quinto
+# viene rifiutato con un 400.
+#
+# Il simulatore li accettava tutti. Era una **falla di fedelta'**, non una
+# semplificazione innocua: un pianificatore che ne emettesse cinque avrebbe
+# superato ogni test e fallito solo in produzione, e il test sarebbe stato
+# verde proprio sul caso che doveva cogliere. L'ha trovata `ecotokens verifica
+# --anche-simulato`, cioe' il giro che era stato dichiarato incapace di dire
+# qualcosa sull'API: non dice niente sull'API, ma dice molto sul simulatore.
+MAX_BREAKPOINTS = 4
+
+# Parametri che i modelli Claude attuali **rifiutano con un 400**. I client
+# OpenAI li mandano di routine, e toglierli e' il mestiere di
+# `translate/to_anthropic.py` - il file piu' delicato del progetto.
+#
+# Il simulatore li accettava in silenzio, e quella tolleranza toglieva ogni
+# valore ai test che coprono la sanificazione: se domani qualcuno smettesse di
+# rimuovere `temperature`, tutti resterebbero verdi e il gateway darebbe 400
+# su ogni richiesta di un client OpenAI. Un simulatore piu' permissivo
+# dell'originale non semplifica: nasconde.
+PARAMETRI_RIFIUTATI = (
+    "temperature",
+    "top_p",
+    "top_k",
+    "frequency_penalty",
+    "presence_penalty",
+    "seed",
+    "logprobs",
+    "n",
+)
 
 
 # Valore predefinito di ``keep`` quando la richiesta non lo specifica. **E' un
@@ -426,6 +482,50 @@ def create_stub(state: StubState | None = None) -> tuple[FastAPI, StubState]:
     async def messages(request: Request):
         payload = await request.json()
         state.requests.append(payload)
+        if state.guasti:
+            # La richiesta e' partita davvero - resta contata - ma non scrive
+            # nessun prefisso in cache: una chiamata fallita non lascia niente
+            # da rileggere, ed e' proprio il caso in cui un gateway distratto
+            # crede di aver messo qualcosa in cache e paga la scrittura due
+            # volte.
+            stato = state.guasti.pop(0)
+            return JSONResponse(
+                status_code=stato,
+                content={
+                    "type": "error",
+                    "error": {"type": _tipo_errore(stato), "message": f"guasto simulato {stato}"},
+                },
+            )
+        vietati = [nome for nome in PARAMETRI_RIFIUTATI if nome in payload]
+        if vietati:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": (
+                            f"Unexpected parameter(s): {', '.join(vietati)}. "
+                            "These are not supported on this model."
+                        ),
+                    },
+                },
+            )
+        marcati = _conta_breakpoint(payload)
+        if marcati > MAX_BREAKPOINTS:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": (
+                            f"A maximum of {MAX_BREAKPOINTS} blocks with "
+                            f"cache_control may be provided, got {marcati}"
+                        ),
+                    },
+                },
+            )
         usage = _usage_for(state, payload)
         blocks = _content_blocks(state)
         stop_reason = "tool_use" if state.tool_calls else state.stop_reason
@@ -507,7 +607,24 @@ def create_stub(state: StubState | None = None) -> tuple[FastAPI, StubState]:
             )
             yield _event("message_stop", {"type": "message_stop"})
 
-        return StreamingResponse(events(), media_type="text/event-stream")
+        async def troncati():
+            """Gli stessi eventi, ma tagliati dove chiede lo stato.
+
+            Contare da fuori invece di instrumentare ogni `yield` tiene la
+            simulazione del guasto separata dalla simulazione del protocollo:
+            se domani cambiano gli eventi, il troncamento continua a valere.
+            """
+            limite = state.interrompi_stream_dopo
+            emessi = 0
+            async for evento in events():
+                if limite is not None and emessi >= limite:
+                    # Nessun `message_stop`: e' cosi' che si presenta una
+                    # connessione caduta, non con un evento di errore.
+                    return
+                yield evento
+                emessi += 1
+
+        return StreamingResponse(troncati(), media_type="text/event-stream")
 
     @app.post("/v1/messages/count_tokens")
     async def count_tokens(request: Request):
@@ -517,6 +634,41 @@ def create_stub(state: StubState | None = None) -> tuple[FastAPI, StubState]:
         return JSONResponse(content={"input_tokens": total})
 
     return app, state
+
+
+def _conta_breakpoint(payload: dict[str, Any]) -> int:
+    """Blocchi marcati con `cache_control`, ovunque si trovino.
+
+    Il conto e' su tutta la richiesta - tool, system e messaggi - perche' e'
+    cosi' che lo fa l'API: i quattro sono un budget della richiesta, non di
+    ciascuna delle sue parti.
+    """
+    quanti = 0
+    da_guardare: list[Any] = [payload.get("system"), payload.get("tools")]
+    for messaggio in payload.get("messages") or []:
+        if isinstance(messaggio, dict):
+            da_guardare.append(messaggio.get("content"))
+    for gruppo in da_guardare:
+        if isinstance(gruppo, list):
+            quanti += sum(
+                1
+                for blocco in gruppo
+                if isinstance(blocco, dict) and blocco.get("cache_control")
+            )
+    return quanti
+
+
+def _tipo_errore(stato: int) -> str:
+    """Il `type` che l'API mette nel corpo, per codice di stato."""
+    return {
+        400: "invalid_request_error",
+        401: "authentication_error",
+        403: "permission_error",
+        404: "not_found_error",
+        429: "rate_limit_error",
+        500: "api_error",
+        529: "overloaded_error",
+    }.get(stato, "api_error")
 
 
 def _event(name: str, data: dict[str, Any]) -> str:

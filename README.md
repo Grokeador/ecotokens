@@ -161,6 +161,29 @@ profilo creato con `ant auth login`.
 set ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+Su Windows, per renderla permanente: `setx ANTHROPIC_API_KEY "sk-ant-..."`, poi
+riaprire il terminale. **Non metterla nel file di configurazione**: è il modo
+più facile di pubblicarla per sbaglio insieme al resto.
+
+### Verificare che sia a posto
+
+```bash
+ecotokens diagnosi
+```
+
+Vale la pena farlo, perché quasi tutti i modi di configurare male questo
+gateway **non danno errore**. Una chiave assente si manifesta come un 401 sulla
+prima richiesta vera; una cartella non scrivibile come un registro che resta
+vuoto e pagine che non spiegano perché; SQLite senza FTS5 come una memoria che
+non trova mai niente; un modello sotto la soglia minima come una cache che non
+si forma — e quest'ultimo caso l'API non lo segnala in nessun modo.
+
+Il comando controlla nove cose e, per ognuna che non va, dice cosa fare. Non
+stampa mai il valore di una credenziale, solo da dove arriva: un output di
+diagnosi finisce incollato nelle segnalazioni di errore, ed è esattamente il
+posto in cui una chiave non deve trovarsi. Il codice di uscita è 0, 1 o 2
+secondo la gravità, quindi si può mettere davanti a `serve` in uno script.
+
 ## Avvio
 
 ```bash
@@ -1235,6 +1258,86 @@ otto difetti del *metro* e undici del *gateway*:
   risposta — il banco non lo misura. Qui la misura era corretta e rispondeva a
   una domanda diversa da quella che sembrava.
 
+## Cosa questo progetto dà per vero senza averlo verificato
+
+Tutte le misure girano contro un simulatore. È una scelta: i test non devono
+richiedere rete, e un banco che chiama l'API vera costa a ogni esecuzione e dà
+numeri diversi ogni volta. Ma ha un prezzo, ed è giusto scriverlo.
+
+Un simulatore è un insieme di assunzioni sul comportamento dell'originale.
+Finché restano implicite, «risparmia il 72%» significa «risparmia il 72% *se*
+sono tutte giuste», e nessuno sa quante siano né quali.
+
+```bash
+ecotokens assunzioni
+```
+
+Sono dieci: **sei documentate** — stanno nella documentazione ufficiale, quindi
+possono essere invecchiate ma non inventate — e **quattro dichiarate**, cioè
+scelte da noi perché senza un valore il simulatore non funzionerebbe. Zero
+verificate contro l'API vera, e un test si accende se qualcuno cambia quel
+numero senza aver fatto la misura.
+
+Le quattro dichiarate sono quelle che possono spostare un numero di questo
+README. La più pesante è l'effetto dell'effort sui token generati: il verso è
+certo — meno effort, meno ragionamento fatturato — ma il rapporto fra i livelli
+dipende dal compito. Senza un modello dichiarato il simulatore restituirebbe
+sempre la stessa lunghezza, e lo stadio risulterebbe inutile *per costruzione*,
+che è il difetto peggiore che una misura possa avere.
+
+Elencarle non le verifica. Trasforma un dubbio senza contorni in una lista
+finita, dove ogni voce dice cosa risulterebbe diverso se fosse sbagliata.
+
+Cinque delle dieci si controllano da sole:
+
+```bash
+ecotokens verifica --live
+```
+
+Nove chiamate corte, qualche centesimo. Il comando **si rifiuta di girare
+contro il simulatore** senza `--anche-simulato`, e in quel caso ogni riga porta
+scritto che il risultato è circolare: verificare il simulatore contro se stesso
+produce una schermata di spunte verdi priva di informazione, ed è la stessa
+forma di errore che in questo progetto ha già dichiarato tre volte il gateway
+dannoso o inutile.
+
+Eppure quel giro circolare, che non dice niente sull'API, ha detto qualcosa
+sulla copia: il simulatore **accettava cinque breakpoint** dove l'API ne
+consente quattro, e accettava i parametri che l'API rifiuta con un 400. Un
+simulatore più permissivo dell'originale non semplifica, nasconde: rendeva vuoti
+i test che coprono la sanificazione dei parametri, perché sarebbero passati
+anche se il gateway avesse smesso di rimuoverli. Ora rifiuta come rifiuterebbe
+l'API, e quei test significano qualcosa.
+
+## Cosa succede quando qualcosa si rompe
+
+Un gateway sta **in mezzo**. La domanda che decide se vale la pena installarlo
+non è quanto risparmia quando va tutto bene: è se può far fallire una richiesta
+che senza di lui sarebbe passata. Un ottimizzatore che si rompe non è un
+ottimizzatore lento, è un guasto in più che prima non c'era.
+
+La regola è che **un guasto interno degrada, non abbatte**:
+
+| Cosa si rompe | Cosa fa il gateway |
+|---|---|
+| Uno stadio solleva un'eccezione | Lo annulla — parametri riportati a com'erano prima che partisse — e prosegue. La richiesta parte senza quell'ottimizzazione, cioè più cara, non fallita. |
+| Lo stesso stadio si rompe tre volte di fila | Lo spegne, e la console dice *disattivato dal gateway*, non «spento per scelta». Torna attivo al riavvio. |
+| Il tetto di spesa dice di no | **Abbatte**, ed è l'unica eccezione: è l'unico stadio il cui scopo è impedire una spesa. |
+| L'API risponde 429 o 529 | Riprova con backoff (`upstream.max_retries`, due volte). Un 400 non viene riprovato: sarebbe sempre rifiutato. |
+| Lo stream si chiude a metà | Il client riceve `finish_reason` nullo più un blocco di errore, mai `"stop"` — e la risposta tagliata non entra in cache. La spesa già sostenuta viene comunque registrata. |
+| Il registro non è scrivibile | Si perde la misura, non la risposta: il termometro non è il paziente. |
+| La richiesta è annidata oltre 100 livelli | Non si può salvare, quindi non si ottimizza: parte com'è. Non si ottimizza ciò che non si saprebbe annullare. |
+
+Ognuna di queste righe è un test in [`tests/test_guasti.py`](tests/test_guasti.py)
+e [`tests/test_ingresso.py`](tests/test_ingresso.py), e quasi tutte descrivono
+un difetto che c'era davvero: prima, un bug in uno stadio diventava un 500, e
+uno stream tagliato veniva consegnato con l'etichetta di risposta completa.
+
+Il salvataggio dei parametri che rende possibile l'annullamento costa una copia
+per stadio che riscrive. Misurato A/B a 0, 10 e 40 turni: **sotto il rumore**
+dello strumento. Il conto a tavolino diceva il contrario, ed è la settima volta
+che succede.
+
 ## Trappole
 
 Cose su cui il progetto ha già perso tempo una volta.
@@ -1345,6 +1448,9 @@ poi la cache venga davvero letta.
 |---|---|
 | `ecotokens serve` | avvia il gateway |
 | `ecotokens stats` | riepilogo di consumi, costi e risparmio |
+| `ecotokens diagnosi` | controlla l'installazione: nove verifiche, e cosa fare per ognuna |
+| `ecotokens assunzioni` | cosa il progetto dà per vero senza averlo verificato |
+| `ecotokens verifica --live` | controlla quelle assunzioni contro l'API vera |
 | `ecotokens purge` | rimuove le voci di cache scadute |
 | `ecotokens purge --everything` | svuota le cache |
 | `ecotokens bench` | misura lo stesso carico con e senza gateway |
@@ -1358,6 +1464,9 @@ poi la cache venga davvero letta.
 | `ecotokens pruning` | confronta le strategie di potatura del contesto |
 | `ecotokens cachewrites` | conta le scritture in cache che nessuno rilegge |
 | `ecotokens ceiling` | dice fin dove puo' arrivare il risparmio, e cosa lo ferma |
+| `ecotokens ritenzione` | verifica se cio' che serviva e' arrivato davvero al prompt |
+| `ecotokens memoria` | misura il recupero dei fatti ricordati |
+| `ecotokens streaming` | confronta streaming e non streaming |
 | `ecotokens dashboard` | genera la dashboard HTML |
 
 ## Endpoint

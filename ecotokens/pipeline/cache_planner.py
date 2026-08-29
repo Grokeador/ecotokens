@@ -47,6 +47,7 @@ def _blocks(message: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 class CachePlannerStage(BaseStage):
     name = "cache_planner"
+    riscrive = True  # Piazza i `cache_control` dentro i blocchi.
 
     def __init__(self, settings: Any) -> None:
         self.config = settings.cache_planner

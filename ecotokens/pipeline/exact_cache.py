@@ -127,6 +127,10 @@ class ExactCacheStage(BaseStage):
     async def after(self, ctx: RequestContext, message: Any | None) -> None:
         if message is None or ctx.cache_key is None or ctx.source != "api":
             return
+        if ctx.risposta_incompleta:
+            # Salvarla trasformerebbe una connessione caduta una volta in una
+            # risposta tagliata servita per sempre.
+            return
         if self._skip(ctx):
             return
         response = ctx.upstream_response

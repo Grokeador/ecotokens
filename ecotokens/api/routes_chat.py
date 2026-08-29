@@ -130,20 +130,33 @@ async def _stream_upstream(
             final_message = await stream.get_final_message()
     except Exception as error:
         logger.warning("stream interrotto: %s", error)
-        yield sse(
-            {
-                "id": ctx.completion_id,
-                "object": "chat.completion.chunk",
-                "created": translator.created,
-                "model": ctx.model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                "error": error_payload(str(error), "api_error")["error"],
-            }
-        )
+        yield translator.chunk_interrotto(str(error))
+        # **Il prompt e' gia' stato pagato.** Anthropic lo ha letto per
+        # intero - input, letture e scritture di cache - e ha generato i
+        # token consegnati fin qui. Uscire senza passare dalla contabilita'
+        # rendeva quella spesa invisibile: `stats` la sottostimava e il tetto
+        # di spesa non la contava, quindi si poteva sforare un budget a furia
+        # di stream che cadono senza che nessun contatore se ne accorgesse.
+        await _conta_interrotto(gateway, ctx, translator)
+        if body.wants_usage_in_stream():
+            yield translator.usage_chunk(ctx.meta())
         yield DONE
         return
 
-    yield translator.final_chunk()
+    if translator.interrotto:
+        # Lo stream si e' chiuso **senza errori** ma anche senza dire di
+        # essere finito: e' cosi' che si presenta un proxy che taglia la
+        # connessione. Prima di questa riga il gateway consegnava la risposta
+        # tagliata con `finish_reason: "stop"`, cioe' certificava come
+        # completa una risposta a meta'.
+        logger.warning("stream chiuso senza stop_reason: risposta incompleta")
+        ctx.risposta_incompleta = True
+        ctx.note("risposta incompleta: lo stream si e' chiuso a meta'")
+        yield translator.chunk_interrotto(
+            "lo stream si e' chiuso prima della fine della risposta"
+        )
+    else:
+        yield translator.final_chunk()
 
     ctx.usage = translator.usage
     response = to_openai_response(final_message, model=ctx.model, usage=ctx.usage)
@@ -154,3 +167,19 @@ async def _stream_upstream(
     if body.wants_usage_in_stream():
         yield translator.usage_chunk(ctx.meta())
     yield DONE
+
+
+async def _conta_interrotto(gateway, ctx: RequestContext, translator) -> None:
+    """Contabilita' di uno stream morto per strada.
+
+    Non c'e' nessun messaggio finale da passare agli stadi, ma i consumi si
+    conoscono lo stesso: il traduttore li ha raccolti da `message_start` e
+    dai `message_delta` arrivati prima della caduta.
+    """
+    ctx.usage = translator.usage
+    ctx.risposta_incompleta = True
+    if not ctx.usage.total_prompt_tokens:
+        # Caduta prima ancora di sapere quanto e' costata: non c'e' niente da
+        # registrare, e inventare uno zero sarebbe una riga falsa in piu'.
+        return
+    await gateway.pipeline.after(ctx, None)

@@ -77,6 +77,7 @@ TOKEN_PER_RIGA = 25
 
 class ContextStage(BaseStage):
     name = "context"
+    riscrive = True  # Pota, compatta e riscrive la cronologia.
 
     def __init__(self, settings: Any) -> None:
         self.config = settings.context

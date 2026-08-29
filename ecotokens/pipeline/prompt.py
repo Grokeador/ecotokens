@@ -30,6 +30,7 @@ from .base import BaseStage, RequestContext
 
 class PromptOptimizerStage(BaseStage):
     name = "prompt"
+    riscrive = True  # Riscrive il testo **dentro** i messaggi, in posto.
 
     def __init__(self, settings: Any) -> None:
         self.config = settings.prompt

@@ -46,6 +46,7 @@ COMPLEXITY_HINTS = (
 
 class RouterStage(BaseStage):
     name = "router"
+    riscrive = True  # Cambia `model` e i parametri di effort.
 
     def __init__(self, settings: Any) -> None:
         self.config = settings.router

@@ -922,5 +922,168 @@ TUNING_LOG: list[TuningEntry] = [
             "fatto."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Un bug di uno stadio faceva fallire una richiesta che sarebbe passata",
+        finding=(
+            "`Pipeline.before` chiamava gli stadi senza alcuna protezione. Qualunque "
+            "eccezione dentro memoria, compattazione, router o pianificatore di cache "
+            "risaliva fino alla rotta e usciva come 500. Un ottimizzatore che si rompe "
+            "trasformava cosi' una richiesta valida in un errore: senza il gateway "
+            "sarebbe passata."
+        ),
+        effect=(
+            "Introdotta la regola che governa adesso tutti gli stadi: **un guasto "
+            "interno degrada, non abbatte**. Lo stadio rotto viene annullato - con i "
+            "parametri riportati a com'erano prima, perche' proseguire con un prompt "
+            "riscritto a meta' e' peggio che non riscriverlo - e la catena prosegue. "
+            "`PipelineAbort` resta l'unica eccezione, perche' il tetto di spesa deve "
+            "poter dire di no. Dopo tre guasti consecutivi lo stadio si spegne, e il "
+            "motivo compare nella console al posto di quello dichiarato in "
+            "configurazione: uno stadio spento da un bug e uno spento per scelta "
+            "sembravano identici."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Una risposta tagliata a meta' veniva consegnata come completa",
+        finding=(
+            "In streaming, `stop_reason` arriva in `message_delta`. Se lo stream si "
+            "chiude prima - un proxy che taglia, una connessione che cade - quel "
+            "campo resta assente, e la traduzione lo passava a `finish_reason()`, il "
+            "cui valore predefinito e' `\"stop\"`. Il client riceveva mezza risposta "
+            "con l'etichetta di risposta finita, indistinguibile da quella giusta."
+        ),
+        effect=(
+            "E' il difetto peggiore trovato finora, perche' non produce nessun errore "
+            "da nessuna parte: chi legge la risposta non ha modo di sapere che manca "
+            "qualcosa. Ora uno stream chiuso senza `stop_reason` esce con "
+            "`finish_reason` nullo e un blocco di errore esplicito; nessuno dei "
+            "quattro valori previsti da OpenAI descrive \"la connessione e' caduta\", "
+            "e sceglierne uno sarebbe stato sostituire una bugia comoda a "
+            "un'informazione mancante. La risposta tagliata non entra piu' in cache, "
+            "o un guasto momentaneo sarebbe stato servito per sempre."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Uno stream caduto per errore non veniva messo in conto",
+        finding=(
+            "Quando lo streaming sollevava, il generatore emetteva un chunk di errore "
+            "e usciva **senza passare dalla contabilita'**. Ma a quel punto Anthropic "
+            "ha gia' letto tutto il prompt - input, letture e scritture di cache - e "
+            "generato i token consegnati fin li'."
+        ),
+        effect=(
+            "La spesa era invisibile: `stats` la sottostimava e il tetto giornaliero "
+            "non la contava, quindi si poteva sforare un budget a furia di stream che "
+            "cadono senza che nessun contatore se ne accorgesse. Adesso i consumi "
+            "raccolti dal traduttore finiscono nel registro anche quando non arriva "
+            "nessun messaggio finale."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Gli errori di validazione uscivano nel formato sbagliato",
+        finding=(
+            "Il progetto aveva gia' la regola - un client OpenAI che non trova "
+            "`error.message` fallisce nel proprio parser, e la causa vera sparisce - "
+            "ma applicata ai soli errori dell'API a monte. Gli errori generati dal "
+            "gateway stesso uscivano come `422` con il campo `detail` di FastAPI. In "
+            "piu' un corpo senza messaggi passava del tutto: pydantic non valida i "
+            "valori predefiniti, quindi `messages` con `default_factory=list` "
+            "accettava una conversazione vuota e la spediva all'API."
+        ),
+        effect=(
+            "Una regola applicata a meta' e' una regola che protegge nel caso raro e "
+            "non in quello frequente: un client sbaglia molto piu' spesso la propria "
+            "richiesta di quanto l'API a monte vada in errore. Ora la busta e' la "
+            "stessa per tutti e due i casi, con `400` invece di `422`, ed e' il codice "
+            "su cui i client decidono di non riprovare."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Il conto a tavolino diceva che proteggere la pipeline era troppo caro",
+        finding=(
+            "Salvare i parametri prima di ogni stadio costa una copia: 0,89 ms su una "
+            "conversazione da cinquanta turni. Moltiplicato per otto stadi faceva "
+            "7 ms, contro i 10,4 ms di CPU per richiesta ricavati dalle 96 richieste "
+            "al secondo misurate in precedenza - il 68% del budget. Sulla base di quel "
+            "conto la protezione era stata fatta con **un solo** salvataggio per "
+            "richiesta, accettando che un guasto annullasse anche il lavoro degli "
+            "stadi precedenti."
+        ),
+        effect=(
+            "Misurato A/B, alternando le serie: la differenza fra protetto e non "
+            "protetto sta **sotto il rumore** a 0, 10 e 40 turni. Il conto era giusto "
+            "e le grandezze sbagliate - rapportava una copia che cresce con la "
+            "conversazione al tempo di CPU di una richiesta corta, cioe' proprio "
+            "quella in cui la copia non costa niente. Passato al salvataggio per "
+            "stadio, che e' la versione giusta: chi si rompe perde solo il proprio "
+            "lavoro. E' la settima volta che l'aritmetica a tavolino convince in "
+            "fretta di qualcosa di falso."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="La rete di sicurezza apriva la via di guasto che doveva chiudere",
+        finding=(
+            "La copia dei parametri e' ricorsiva, e i parametri arrivano da fuori. Un "
+            "client che manda un contenuto annidato cinquecento volte esauriva lo "
+            "stack: `RecursionError` a 500 livelli, sollevato **fuori** dal `try` che "
+            "avrebbe dovuto proteggere lo stadio. Il conteggio dei guasti aveva un "
+            "difetto gemello: `before` e `after` condividevano lo stesso contatore, e "
+            "uno stadio rotto in `before` ha quasi sempre un `after` che non fa niente "
+            "e quindi riesce - la serie si azzerava a ogni richiesta e lo stadio rotto "
+            "non veniva mai spento."
+        ),
+        effect=(
+            "Un limite di profondita' dichiarato trasforma un errore dell'interprete "
+            "in una decisione del gateway, e il salvataggio e' entrato dentro il "
+            "`try`: se non si riesce a salvare, si salta lo stadio invece di far "
+            "fallire la richiesta - non si ottimizza cio' che non si saprebbe "
+            "annullare. Entrambi i difetti li ha trovati un test scritto sul "
+            "comportamento voluto, non la rilettura del codice, ed entrambi stavano "
+            "**nella correzione**: scrivere una rete di sicurezza e' scrivere codice, "
+            "e il codice nuovo e' esattamente dove i bug sono piu' probabili."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Il simulatore era piu' permissivo dell'API che simulava",
+        finding=(
+            "Accettava cinque breakpoint di cache dove l'API ne consente quattro, e "
+            "accettava `temperature`, `top_p` e gli altri parametri che i modelli "
+            "Claude attuali rifiutano con un 400. Trovato eseguendo `ecotokens "
+            "verifica --anche-simulato`, cioe' il giro che il comando stesso "
+            "dichiara incapace di dire alcunche' sull'API vera."
+        ),
+        effect=(
+            "Un simulatore piu' permissivo dell'originale non semplifica: nasconde. "
+            "Rendeva **vuoti** i test che coprono la sanificazione dei parametri - "
+            "il mestiere di `translate/to_anthropic.py`, il file piu' delicato del "
+            "progetto - perche' passavano anche se il gateway avesse smesso di "
+            "rimuoverli; e avrebbe lasciato passare un pianificatore che emette "
+            "cinque breakpoint, con i test verdi proprio sul caso che dovevano "
+            "cogliere. La lezione sta nel modo in cui e' venuto fuori: il confronto "
+            "circolare non dice niente sull'originale, ma dice molto sulla copia."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="La chiusura si fermava al primo intoppo",
+        finding=(
+            "`shutdown` eseguiva potatura della cache, chiusura del database e "
+            "chiusura del client HTTP in fila senza protezione. Una potatura fallita "
+            "- database in sola lettura, disco pieno - lasciava aperti gli altri due, "
+            "cioe' proprio le risorse che la chiusura esiste per rilasciare."
+        ),
+        effect=(
+            "I tre passi sono indipendenti e adesso vengono tentati tutti. E' lo "
+            "stesso principio del fail-open applicato all'uscita: un guasto durante "
+            "la pulizia non deve trasformarsi in una perdita di risorse."
+        ),
+    ),
 
 ]

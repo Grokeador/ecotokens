@@ -146,6 +146,185 @@ def serve(
 
 
 @app.command()
+def diagnosi(
+    config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
+) -> None:
+    """Controlla l'installazione: cosa non funzionera', prima che smetta.
+
+    Quasi tutti i modi di configurare male questo gateway **non danno
+    errore**. Una chiave assente si manifesta come un 401 sulla prima
+    richiesta vera, una cartella non scrivibile come un registro che resta
+    vuoto, FTS5 mancante come una memoria che non trova niente. Sono guasti
+    silenziosi, e un guasto silenzioso costa piu' di uno rumoroso: si scopre
+    dopo, quando si e' gia' concluso qualcosa di sbagliato.
+
+    Il codice di uscita e' 0 se va tutto, 1 con avvisi, 2 con problemi gravi:
+    cosi' si puo' mettere davanti a `serve` in uno script di avvio.
+    """
+    from .config import load_settings
+    from .diagnosi import AVVISO, GRAVE, OK, esegui
+
+    settings = load_settings(config)
+    esito = esegui(settings, percorso_config=config)
+
+    segni = {OK: "[green]OK[/]", AVVISO: "[yellow]!![/]", GRAVE: "[red]NO[/]"}
+    tabella = Table(show_header=False, box=None, padding=(0, 1))
+    tabella.add_column(width=3)
+    tabella.add_column(style="bold", width=22)
+    tabella.add_column(overflow="fold")
+
+    for voce in esito.esiti:
+        tabella.add_row(segni[voce.stato], voce.nome, voce.dettaglio)
+        if voce.rimedio:
+            tabella.add_row("", "", f"[dim]{voce.rimedio}[/]")
+    console.print()
+    console.print(tabella)
+    console.print()
+
+    if esito.gravi:
+        quanti = len(esito.gravi)
+        console.print(
+            f"[red]{quanti} problem{'a' if quanti == 1 else 'i'} da risolvere "
+            "prima di usarlo sul serio.[/]"
+        )
+    elif esito.avvisi:
+        quanti = len(esito.avvisi)
+        console.print(
+            f"[yellow]{quanti} avvis{'o' if quanti == 1 else 'i'}: funziona, "
+            "ma non come potrebbe.[/]"
+        )
+    else:
+        console.print("[green]Tutto a posto.[/]")
+    raise typer.Exit(code=esito.codice_uscita)
+
+
+@app.command()
+def assunzioni() -> None:
+    """Cosa il progetto da' per vero senza averlo verificato.
+
+    Tutte le misure girano contro un simulatore, ed e' una scelta: i test non
+    devono richiedere rete, e un banco che chiama l'API vera costa a ogni
+    esecuzione. Ma un simulatore e' un insieme di assunzioni, e finche' restano
+    implicite «risparmia il 72%» vuol dire «risparmia il 72% *se* sono tutte
+    giuste», senza che nessuno sappia quante siano.
+
+    Elencarle non le verifica. Trasforma un dubbio senza contorni in una lista
+    finita, dove ogni voce dice cosa risulterebbe diverso se fosse sbagliata.
+    """
+    from .assunzioni import ASSUNZIONI, DICHIARATA, DOCUMENTATA, riepilogo
+
+    ordine = {DOCUMENTATA: 0, DICHIARATA: 1}
+    for voce in sorted(ASSUNZIONI, key=lambda a: (ordine.get(a.fonte, 2), a.nome)):
+        colore = {"documentata": "cyan", "dichiarata": "yellow"}.get(voce.fonte, "green")
+        console.print()
+        console.print(f"[bold]{voce.nome}[/]  [{colore}]{voce.fonte}[/]")
+        console.print(f"  {voce.valore}   [dim]({voce.dove})[/]")
+        console.print(f"  [dim]Se fosse sbagliata:[/] {voce.cosa_cambia}")
+        console.print(f"  [dim]Come verificarla:[/] {voce.come_verificarla}")
+
+    console.print()
+    console.print(f"[bold]{riepilogo()}[/]")
+    console.print(
+        "[dim]Le voci [yellow]dichiarate[/dim] sono quelle che possono spostare un "
+        "numero del README. Le altre possono essere invecchiate, non inventate.[/]"
+    )
+
+
+@app.command()
+def verifica(
+    live: bool = typer.Option(
+        False, "--live", help="Chiama l'API vera. Costa, ed e' l'unico modo che vale."
+    ),
+    simulato: bool = typer.Option(
+        False,
+        "--anche-simulato",
+        help="Esegui contro il simulatore. I risultati sono circolari, e lo dice.",
+    ),
+    modello: str = typer.Option("claude-opus-5", help="Modello su cui verificare"),
+) -> None:
+    """Controlla le assunzioni del simulatore contro il comportamento vero.
+
+    `ecotokens assunzioni` elenca cosa il progetto da' per vero; questo lo
+    verifica. Contro il simulatore ogni controllo passa e **non significa
+    niente**: si verificherebbe il simulatore contro se stesso, cioe' si
+    produrrebbe una spunta verde priva di informazione. E' la forma di misura
+    che questo progetto ha gia' sbagliato tre volte, quindi serve `--live` -
+    oppure `--anche-simulato`, e allora ogni riga porta scritto che e' circolare.
+    """
+    import asyncio
+
+    from .verifica import (
+        CHIAMATE_PREVISTE,
+        COMBACIA,
+        DIVERGE,
+        INDETERMINATO,
+        nomi_scoperti,
+        verifica as esegui_verifica,
+    )
+
+    if not (live or simulato):
+        console.print(
+            "[yellow]Serve --live.[/] Contro il simulatore ogni controllo passa "
+            "per costruzione, e una spunta che non puo' fallire non e' una "
+            "verifica. Per eseguirlo lo stesso, e vederlo dichiarato circolare: "
+            "[cyan]--anche-simulato[/]."
+        )
+        raise typer.Exit(code=2)
+
+    if live:
+        esigi_credenziali()
+        console.print(
+            f"[dim]{CHIAMATE_PREVISTE} chiamate all'API su {modello}. "
+            "Prompt corti: qualche centesimo.[/]"
+        )
+
+    async def gira():
+        import anthropic
+
+        if live:
+            return await esegui_verifica(anthropic.AsyncAnthropic(), modello)
+
+        import httpx2
+
+        from .simulator import create_stub
+
+        stub_app, _ = create_stub()
+        client = anthropic.AsyncAnthropic(
+            api_key="prova",
+            base_url="http://simulatore",
+            http_client=anthropic.DefaultAsyncHttpxClient(
+                transport=httpx2.ASGITransport(app=stub_app)
+            ),
+        )
+        try:
+            return await esegui_verifica(client, modello, circolare=True)
+        finally:
+            await client.close()
+
+    rapporto = asyncio.run(gira())
+
+    segni = {COMBACIA: "[green]OK[/]", DIVERGE: "[red]NO[/]", INDETERMINATO: "[yellow]??[/]"}
+    for controllo in rapporto.controlli:
+        console.print()
+        console.print(f"{segni[controllo.esito]} [bold]{controllo.assunzione}[/]")
+        console.print(f"   atteso:    {controllo.atteso}")
+        console.print(f"   osservato: {controllo.osservato}")
+        if controllo.nota:
+            console.print(f"   [dim]{controllo.nota}[/]")
+
+    console.print()
+    console.print(f"[bold]{rapporto.riepilogo()}[/]")
+    scoperte = sorted(nomi_scoperti())
+    if scoperte:
+        console.print(
+            "[dim]Non controllate da qui: " + ", ".join(scoperte) + ". "
+            "Un elenco di cio' che si sa fare, senza quello di cio' che non si "
+            "sa fare, si legge come se coprisse tutto.[/]"
+        )
+    raise typer.Exit(code=2 if rapporto.divergenze else 0)
+
+
+@app.command()
 def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione")) -> None:
     """Mostra consumi, costi e risparmio registrati."""
     settings = load_settings(config)

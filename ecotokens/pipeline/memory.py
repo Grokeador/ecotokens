@@ -29,6 +29,7 @@ logger = logging.getLogger("ecotokens.memory")
 
 class MemoryStage(BaseStage):
     name = "memory"
+    riscrive = True  # Aggiunge il blocco dei fatti in coda ai messaggi.
 
     def __init__(self, settings: Any) -> None:
         self.config = settings.memory

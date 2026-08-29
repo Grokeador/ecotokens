@@ -91,10 +91,34 @@ async def build_console_data(gateway: Any) -> dict[str, Any]:
         "sessions": sessioni,
         "profile": settings.profilo,
         "config": _config_stadi(gateway),
+        "faults": _guasti(gateway),
         "not_measured": NON_MISURATO,
     }
     dati["alerts"] = _avvisi(dati)
     return dati
+
+
+def _guasti(gateway: Any) -> list[dict[str, Any]]:
+    """Gli stadi che si sono rotti, e quante volte.
+
+    Vive nel processo, non nel database: sparisce a ogni riavvio, ed e'
+    giusto cosi'. Un guasto e' un fatto di **questa** esecuzione, e un elenco
+    che sopravvive al riavvio direbbe "rotto" di uno stadio che nel frattempo
+    e' stato corretto.
+    """
+    voci = []
+    for nome, voce in sorted(gateway.pipeline.guasti.items()):
+        voci.append(
+            {
+                "stage": nome,
+                "count": voce["conteggio"],
+                "consecutive": voce["consecutivi"],
+                "disabled": voce["spento"],
+                "last": voce["ultimo"],
+                "where": voce["dove"],
+            }
+        )
+    return voci
 
 
 def _config_stadi(gateway: Any) -> list[dict[str, Any]]:
@@ -116,7 +140,17 @@ def _config_stadi(gateway: Any) -> list[dict[str, Any]]:
         # si decide. Ripeterlo qui vorrebbe dire tenerne due copie, e una
         # delle due invecchierebbe: e' successo alla didascalia della
         # dashboard, che diceva "spenti" mentre la sua tabella diceva "attivo".
-        motivo = "" if acceso else getattr(sezioni.get(stadio.name), "motivo_se_spenta", "")
+        guasto = gateway.pipeline.guasti.get(stadio.name)
+        if not acceso and guasto and guasto["spento"]:
+            # Distinzione che vale l'intera riga: uno stadio spento da un bug
+            # e uno spento per scelta appaiono identici, e confonderli manda a
+            # cercare il risparmio mancante nel posto sbagliato.
+            motivo = (
+                f"disattivato dal gateway dopo {guasto['consecutivi']} guasti "
+                f"consecutivi in {guasto['dove']}"
+            )
+        else:
+            motivo = "" if acceso else getattr(sezioni.get(stadio.name), "motivo_se_spenta", "")
         voci.append({"name": stadio.name, "enabled": acceso, "reason": motivo})
     return voci
 
@@ -143,6 +177,38 @@ def _avvisi(dati: dict[str, Any]) -> list[dict[str, Any]]:
     avvisi: list[dict[str, Any]] = []
     stadi = dati["stages"]
     richieste = dati["requests"]
+
+    # 0. I guasti interni vengono prima di tutto, e prima anche del controllo
+    #    sulle richieste: uno stadio che si rompe sulla prima richiesta della
+    #    giornata e' esattamente il caso in cui nessun conteggio e' ancora
+    #    maturato, ed e' quando serve saperlo.
+    guasti = dati.get("faults") or []
+    if guasti:
+        spenti = [g["stage"] for g in guasti if g["disabled"]]
+        totale = sum(g["count"] for g in guasti)
+        avvisi.append(
+            {
+                "level": "bad" if spenti else "warn",
+                "count": totale,
+                "title": (
+                    f"{totale} guasti interni in {len(guasti)} stadi"
+                    + (f", {len(spenti)} disattivati" if spenti else "")
+                ),
+                "body": (
+                    "La richiesta e' stata servita lo stesso: uno stadio che si rompe "
+                    "viene annullato e la catena prosegue. Ma un'ottimizzazione che non "
+                    "gira non risparmia, e il risparmio mancante va cercato qui prima "
+                    "che altrove. "
+                    + (
+                        "Disattivati dopo guasti ripetuti: " + ", ".join(spenti) + ". "
+                        "Tornano attivi al riavvio, o dalle impostazioni."
+                        if spenti
+                        else "Ultimo: " + guasti[0]["last"]
+                    )
+                ),
+            }
+        )
+
     if not richieste:
         return avvisi
 
@@ -271,6 +337,17 @@ def _avvisi(dati: dict[str, Any]) -> list[dict[str, Any]]:
 # Cio' che questa pagina non sa dire. Sta nel codice e non nel testo HTML
 # perche' e' contenuto, non decorazione: si aggiorna quando cambia il gateway.
 NON_MISURATO: list[dict[str, str]] = [
+    {
+        "title": "Nessun numero qui sopra viene dall'API vera",
+        "body": (
+            "Le misure del progetto girano contro un simulatore: i test non devono "
+            "richiedere rete, e un banco che chiama l'API costa a ogni esecuzione. Il "
+            "prezzo è che ogni percentuale vale *se* le assunzioni sul comportamento "
+            "dell'API sono giuste. Sono elencate una per una — `ecotokens assunzioni` "
+            "— con, per ognuna, cosa risulterebbe diverso se fosse sbagliata. I numeri "
+            "di questa pagina invece vengono dal traffico vero passato di qui."
+        ),
+    },
     {
         "title": "Se la risposta era giusta",
         "body": (

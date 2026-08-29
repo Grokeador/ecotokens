@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 
 import anthropic
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import __version__
@@ -261,9 +262,30 @@ class Gateway:
         )
 
     async def shutdown(self) -> None:
+        """Chiude tutto, anche se qualcosa lungo la strada si rompe.
+
+        I tre passi sono indipendenti e vanno tentati tutti. Nella versione
+        precedente erano in fila senza protezione: una potatura della cache
+        fallita - un database in sola lettura, un disco pieno - lasciava aperti
+        sia la connessione al database sia il client HTTP, cioe' proprio le due
+        cose che la chiusura esiste per chiudere. Un guasto durante la pulizia
+        diventava una perdita di risorse.
+        """
+        for nome, passo in (
+            ("potatura della cache", self._pota_cache()),
+            ("chiusura del database", self._chiudi_database()),
+            ("chiusura del client", self.client.close()),
+        ):
+            try:
+                await passo
+            except Exception as errore:  # la chiusura non ha nessuno a cui riferire
+                logger.warning("errore durante la %s: %s", nome, errore)
+
+    async def _pota_cache(self) -> None:
         await self.store.prune_cache(self.settings.exact_cache.max_entries)
+
+    async def _chiudi_database(self) -> None:
         self.database.close()
-        await self.client.close()
 
 
 def _dove_scrivere() -> Path:
@@ -293,11 +315,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="EcoTokens",
-        description="Gateway locale OpenAI-compatibile per Claude, con economia di token",
+        description=(
+            "Gateway locale verso l'API Anthropic, con due porte in ingresso: "
+            "dialetto OpenAI e dialetto nativo. Riduce la spesa in token."
+        ),
         version=__version__,
         lifespan=lifespan,
     )
     app.state.gateway = gateway
+
+    @app.exception_handler(RequestValidationError)
+    async def richiesta_malformata(request: Request, errore: RequestValidationError):
+        """Errori di validazione nella busta che un client OpenAI sa aprire.
+
+        FastAPI risponde `422` con un campo `detail`, che e' un ottimo formato
+        - per FastAPI. Un client OpenAI cerca `error.message`, non lo trova, e
+        fallisce **nel proprio parser**: a quel punto l'utente vede un errore
+        della sua libreria al posto del nostro, e la causa vera sparisce.
+        Vale la stessa regola gia' applicata agli errori dell'API a monte; qui
+        mancava per gli errori generati dal gateway stesso.
+
+        E `400`, non `422`: e' il codice che l'API OpenAI usa per una
+        richiesta malformata, ed e' quello su cui i client decidono di non
+        riprovare.
+        """
+        primo = (errore.errors() or [{}])[0]
+        punto = ".".join(str(p) for p in primo.get("loc", ()) if p != "body")
+        messaggio = primo.get("msg", "richiesta non valida")
+        return JSONResponse(
+            status_code=400,
+            content=error_payload(
+                f"{punto}: {messaggio}" if punto else messaggio,
+                "invalid_request_error",
+            ),
+        )
 
     @app.middleware("http")
     async def check_api_key(request: Request, call_next):

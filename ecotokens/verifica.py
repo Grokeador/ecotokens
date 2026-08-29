@@ -1,0 +1,359 @@
+"""Confronta le assunzioni del simulatore con il comportamento vero dell'API.
+
+`ecotokens assunzioni` elenca cosa il progetto dà per vero. Questo modulo lo
+**controlla**, una voce alla volta, chiamando l'API e guardando cosa risponde.
+
+C'è una trappola da nominare subito, perché è la ragione per cui questo file
+potrebbe fare più male che bene. Puntato al simulatore, ogni controllo passa —
+e non significa niente: si starebbe verificando il simulatore contro se stesso,
+cioè producendo una spunta verde che non porta nessuna informazione. È
+esattamente la forma di misura che questo progetto ha già sbagliato tre volte:
+uno strumento che dà una risposta plausibile a una domanda che non ha fatto.
+
+Perciò il comando **si rifiuta di girare contro il simulatore**, a meno che non
+gli si dica esplicitamente di farlo — e in quel caso ogni riga porta scritto
+che il risultato è circolare. La spunta vale solo quando dall'altra parte c'è
+`api.anthropic.com`.
+
+Le chiamate costano. Sono poche e corte, e il comando dice quante ne farà prima
+di farle.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from .assunzioni import ASSUNZIONI
+from .pricing import MODELS
+
+COMBACIA = "combacia"
+DIVERGE = "diverge"
+INDETERMINATO = "indeterminato"
+
+
+@dataclass
+class Controllo:
+    assunzione: str
+    atteso: str
+    osservato: str
+    esito: str
+    nota: str = ""
+    chiamate: int = 0
+
+
+@dataclass
+class Rapporto:
+    controlli: list[Controllo] = field(default_factory=list)
+    circolare: bool = False
+
+    @property
+    def chiamate(self) -> int:
+        return sum(c.chiamate for c in self.controlli)
+
+    @property
+    def divergenze(self) -> list[Controllo]:
+        return [c for c in self.controlli if c.esito == DIVERGE]
+
+    def riepilogo(self) -> str:
+        combaciano = sum(1 for c in self.controlli if c.esito == COMBACIA)
+        testo = (
+            f"{combaciano} su {len(self.controlli)} combaciano, "
+            f"{len(self.divergenze)} divergono, {self.chiamate} chiamate."
+        )
+        if self.circolare:
+            testo += (
+                " ATTENZIONE: eseguito contro il simulatore. Ogni riga verifica "
+                "il simulatore contro se stesso e non dice niente sull'API vera."
+            )
+        return testo
+
+
+def _usage(messaggio: Any) -> dict[str, int]:
+    u = getattr(messaggio, "usage", None)
+    return {
+        nome: int(getattr(u, nome, 0) or 0)
+        for nome in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    }
+
+
+def _riempi(token_circa: int) -> str:
+    """Testo lungo circa `token_circa` token, stimati a 3,6 caratteri l'uno."""
+    return "misura di riferimento " * max(1, int(token_circa * 3.6 / 22))
+
+
+# --- i singoli controlli ---------------------------------------------------
+
+
+async def _soglia_di_cache(client, modello: str) -> Controllo:
+    """Sotto la soglia la cache non si forma, e l'API non lo dice.
+
+    E' l'assunzione con la conseguenza piu' subdola di tutte: il gateway crede
+    di aver messo in cache, paga la scrittura e non rilegge mai. Il controllo
+    manda due prompt, uno sotto e uno sopra, e guarda
+    `cache_creation_input_tokens`.
+    """
+    soglia = MODELS[modello].cache_min_tokens
+    osservazioni = {}
+    for etichetta, quanti in (("sotto", int(soglia * 0.6)), ("sopra", int(soglia * 1.8))):
+        messaggio = await client.messages.create(
+            model=modello,
+            max_tokens=16,
+            system=[
+                {
+                    "type": "text",
+                    "text": _riempi(quanti),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": "ok"}],
+        )
+        osservazioni[etichetta] = _usage(messaggio)["cache_creation_input_tokens"]
+
+    atteso = "0 sotto soglia, >0 sopra"
+    osservato = f"{osservazioni['sotto']} sotto, {osservazioni['sopra']} sopra"
+    combacia = osservazioni["sotto"] == 0 and osservazioni["sopra"] > 0
+    return Controllo(
+        assunzione="Soglie minime di cache",
+        atteso=f"{atteso} (soglia dichiarata: {soglia} token per {modello})",
+        osservato=osservato,
+        esito=COMBACIA if combacia else DIVERGE,
+        nota=(
+            ""
+            if combacia
+            else "Se sopra soglia resta a zero, la soglia vera e' piu' alta di "
+            "quella dichiarata e il pianificatore sta pagando scritture che non "
+            "si formano."
+        ),
+        chiamate=2,
+    )
+
+
+async def _rilettura_di_cache(client, modello: str) -> Controllo:
+    """Che una rilettura avvenga si osserva; che costi un decimo, no.
+
+    L'API riporta quanti token sono stati riletti, non a quale prezzo. Il
+    moltiplicatore 0,1x resta documentato e non verificabile da qui, e dirlo e'
+    piu' utile che spuntarlo.
+    """
+    prefisso = [
+        {
+            "type": "text",
+            "text": _riempi(MODELS[modello].cache_min_tokens * 2),
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+    letture = []
+    for _ in range(2):
+        messaggio = await client.messages.create(
+            model=modello,
+            max_tokens=16,
+            system=prefisso,
+            messages=[{"role": "user", "content": "ok"}],
+        )
+        letture.append(_usage(messaggio)["cache_read_input_tokens"])
+
+    combacia = letture[1] > 0
+    return Controllo(
+        assunzione="Moltiplicatori della cache",
+        atteso="la seconda richiesta rilegge il prefisso",
+        osservato=f"riletture: {letture[0]} poi {letture[1]}",
+        esito=COMBACIA if combacia else DIVERGE,
+        nota=(
+            "Verifica solo che la rilettura avvenga. Il moltiplicatore 0,1x non "
+            "e' osservabile da `usage`: l'API riporta i token, non il prezzo."
+        ),
+        chiamate=2,
+    )
+
+
+async def _effetto_effort(client, modello: str) -> Controllo:
+    """L'assunzione dichiarata piu' pesante: ci si appoggia tutto il risparmio
+    del primo livello del router."""
+    from .simulator import EFFORT_OUTPUT_MULTIPLIER
+
+    domanda = "Spiega in modo completo perche' il cielo appare azzurro."
+    osservati: dict[str, int] = {}
+    for livello in ("low", "high", "max"):
+        messaggio = await client.messages.create(
+            model=modello,
+            max_tokens=4096,
+            thinking={"type": "adaptive"},
+            output_config={"effort": livello},
+            messages=[{"role": "user", "content": domanda}],
+        )
+        osservati[livello] = _usage(messaggio)["output_tokens"]
+
+    base = osservati.get("high") or 1
+    rapporti = {k: v / base for k, v in osservati.items()}
+    atteso = ", ".join(
+        f"{k} {EFFORT_OUTPUT_MULTIPLIER[k]:.2f}x" for k in ("low", "high", "max")
+    )
+    osservato = ", ".join(f"{k} {v:.2f}x" for k, v in rapporti.items())
+    # Il verso conta piu' del valore: e' quello su cui si regge lo stadio.
+    verso = osservati["low"] < osservati["high"] < osservati["max"]
+    return Controllo(
+        assunzione="Effetto dell'effort sui token generati",
+        atteso=f"{atteso} (rispetto a high)",
+        osservato=osservato,
+        esito=COMBACIA if verso else DIVERGE,
+        nota=(
+            "Il controllo verifica il **verso**, non i valori: il rapporto esatto "
+            "dipende dal compito, e una sola domanda non lo stabilisce. Se il "
+            "verso non regge, lo stadio dell'effort non risparmia."
+            if verso
+            else "Il verso non regge: abbassare l'effort non riduce i token "
+            "generati su questo compito, e il risparmio attribuito allo stadio "
+            "e' da rifare."
+        ),
+        chiamate=3,
+    )
+
+
+async def _parametri_rifiutati(client, modello: str) -> Controllo:
+    """Se non fossero rifiutati, il gateway starebbe scartando parametri utili."""
+    import anthropic
+
+    try:
+        # `extra_body`, non un parametro: l'SDK 1.x ha **tolto** `temperature`
+        # dalla firma, quindi passarlo direttamente da un TypeError prima
+        # ancora della richiesta. Che e' gia' una conferma - il parametro non
+        # esiste piu' nemmeno per il client ufficiale - ma non e' la domanda:
+        # qui si vuole sapere cosa risponde il server a chi glielo manda
+        # comunque, che e' esattamente cio' che fa un client OpenAI.
+        await client.messages.create(
+            model=modello,
+            max_tokens=16,
+            messages=[{"role": "user", "content": "ok"}],
+            extra_body={"temperature": 0.5},
+        )
+        rifiutato = False
+        dettaglio = "accettato"
+    except anthropic.BadRequestError as errore:
+        rifiutato = True
+        dettaglio = f"400: {str(errore)[:80]}"
+    except Exception as errore:  # un altro errore non risponde alla domanda
+        return Controllo(
+            assunzione="I parametri rimossi danno 400",
+            atteso="400 su `temperature`",
+            osservato=f"{type(errore).__name__}",
+            esito=INDETERMINATO,
+            nota="Errore di altra natura: il controllo non ha potuto concludere.",
+            chiamate=1,
+        )
+
+    return Controllo(
+        assunzione="I parametri rimossi danno 400",
+        atteso="400 su `temperature`",
+        osservato=dettaglio,
+        esito=COMBACIA if rifiutato else DIVERGE,
+        nota=(
+            ""
+            if rifiutato
+            else "Se e' accettato, il gateway sta scartando un parametro che il "
+            "client poteva usare: sta cambiando la risposta senza motivo."
+        ),
+        chiamate=1,
+    )
+
+
+async def _troppi_breakpoint(client, modello: str) -> Controllo:
+    import anthropic
+
+    blocchi = [
+        {
+            "type": "text",
+            "text": _riempi(600) + f" blocco {indice}",
+            "cache_control": {"type": "ephemeral"},
+        }
+        for indice in range(5)
+    ]
+    try:
+        await client.messages.create(
+            model=modello,
+            max_tokens=16,
+            system=blocchi,
+            messages=[{"role": "user", "content": "ok"}],
+        )
+        rifiutato = False
+        dettaglio = "cinque breakpoint accettati"
+    except anthropic.BadRequestError:
+        rifiutato = True
+        dettaglio = "400 sul quinto breakpoint"
+    except Exception as errore:
+        return Controllo(
+            assunzione="Quattro breakpoint al massimo",
+            atteso="400 al quinto",
+            osservato=type(errore).__name__,
+            esito=INDETERMINATO,
+            chiamate=1,
+        )
+
+    return Controllo(
+        assunzione="Quattro breakpoint al massimo",
+        atteso="400 al quinto",
+        osservato=dettaglio,
+        esito=COMBACIA if rifiutato else DIVERGE,
+        nota=(
+            ""
+            if rifiutato
+            else "Se ne accetta cinque, il limite del pianificatore e' piu' "
+            "stretto del necessario e si sta rinunciando a un breakpoint."
+        ),
+        chiamate=1,
+    )
+
+
+CONTROLLI = (
+    _soglia_di_cache,
+    _rilettura_di_cache,
+    _parametri_rifiutati,
+    _troppi_breakpoint,
+    _effetto_effort,
+)
+
+# Quante chiamate costa l'intera verifica. Dichiarato prima di eseguirla:
+# un comando che spende deve dire quanto prima di spendere.
+CHIAMATE_PREVISTE = 9
+
+
+async def verifica(client, modello: str, *, circolare: bool = False) -> Rapporto:
+    """Esegue tutti i controlli. `circolare` marca l'esecuzione sul simulatore."""
+    rapporto = Rapporto(circolare=circolare)
+    for controllo in CONTROLLI:
+        try:
+            rapporto.controlli.append(await controllo(client, modello))
+        except Exception as errore:
+            rapporto.controlli.append(
+                Controllo(
+                    assunzione=controllo.__name__,
+                    atteso="-",
+                    osservato=f"{type(errore).__name__}: {errore}",
+                    esito=INDETERMINATO,
+                    nota="Il controllo stesso si e' rotto: non dice niente "
+                    "sull'assunzione.",
+                )
+            )
+    return rapporto
+
+
+def nomi_coperti() -> set[str]:
+    """Quali voci del registro delle assunzioni questo comando sa controllare."""
+    return {
+        "Soglie minime di cache",
+        "Moltiplicatori della cache",
+        "I parametri rimossi danno 400",
+        "Quattro breakpoint al massimo",
+        "Effetto dell'effort sui token generati",
+    }
+
+
+def nomi_scoperti() -> set[str]:
+    """E quali no. Un elenco di cio' che si sa fare, senza quello di cio' che
+    non si sa fare, si legge come se coprisse tutto."""
+    return {a.nome for a in ASSUNZIONI} - nomi_coperti()
