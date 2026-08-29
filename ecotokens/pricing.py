@@ -112,23 +112,45 @@ ALIASES: dict[str, str] = {
 }
 
 
-def resolve_model(name: str | None, fallback: str = DEFAULT_MODEL) -> str:
-    """Normalizza il nome modello ricevuto da un client OpenAI."""
+def _risolvi(name: str | None, fallback: str) -> tuple[str, bool]:
+    """Risolve il nome e dice se e' stato **riconosciuto** o solo ripiegato.
+
+    La distinzione conta piu' del nome: per un alias noto il ripiego e' una
+    scelta, per un nome ignoto e' una supposizione, e prezzare una
+    supposizione produce dollari inventati che nessuno vede (vedi
+    ``tuning_log``, voce sul modello sconosciuto).
+    """
     if not name:
-        return fallback
+        # Nessun nome: il default della configurazione e' una scelta esplicita.
+        return fallback, True
     key = name.strip()
     if key in MODELS:
-        return key
+        return key, True
     lowered = key.lower()
     if lowered in MODELS:
-        return lowered
+        return lowered, True
     if lowered in ALIASES:
-        return ALIASES[lowered]
+        return ALIASES[lowered], True
     # Nomi con suffisso di data che non esistono piu' nell'API attuale.
     for model_id in MODELS:
         if lowered.startswith(model_id):
-            return model_id
-    return fallback
+            return model_id, True
+    return fallback, False
+
+
+def resolve_model(name: str | None, fallback: str = DEFAULT_MODEL) -> str:
+    """Normalizza il nome modello ricevuto da un client OpenAI."""
+    return _risolvi(name, fallback)[0]
+
+
+def modello_riconosciuto(name: str | None, fallback: str = DEFAULT_MODEL) -> bool:
+    """Falso quando il nome non e' nel catalogo e si e' ripiegato al buio.
+
+    Il gateway continua a funzionare lo stesso - un guasto degrada, non
+    abbatte - ma il costo calcolato su queste richieste e' quello di un
+    modello diverso, quindi non entra nel confronto.
+    """
+    return _risolvi(name, fallback)[1]
 
 
 def model_info(name: str) -> ModelInfo:

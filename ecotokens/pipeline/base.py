@@ -70,6 +70,12 @@ class RequestContext:
     # baseline che se ne va. Si valorizza da sola in __post_init__, cosi'
     # nessun costruttore puo' dimenticarsene.
     requested_model: str = ""
+    # Il nome **come il client lo ha scritto**, prima di qualunque
+    # normalizzazione. `requested_model` non basta: `resolve_model` ripiega sul
+    # default quando non riconosce un nome, quindi a valle un `llama-3.3-70b`
+    # e' gia' diventato `claude-opus-5` e nessuno puo' piu' accorgersi che il
+    # costo sta per essere calcolato con le tariffe di un altro modello.
+    nome_richiesto_grezzo: str = ""
     # Dialetto della richiesta in arrivo. Gli stadi non devono guardarlo:
     # lavorano tutti sui parametri Anthropic, che sono gli stessi in
     # entrambi i casi. Serve alle rotte, per sapere come rispondere.

@@ -1236,5 +1236,30 @@ TUNING_LOG: list[TuningEntry] = [
             "guardava: un metro puo' sbagliare anche solo scegliendo cosa misurare."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Un nome di modello sconosciuto veniva prezzato come Opus 5, in silenzio",
+        finding=(
+            "`resolve_model` ripiega sul modello di default quando non riconosce "
+            "un nome, ed e' la scelta giusta per **servire** la richiesta. Ma il "
+            "ripiego arrivava anche a `pricing`: `llama-3.3-70b`, "
+            "`qwen2.5-coder:32b` o un `claude-opuss-5` sbagliato di battitura "
+            "venivano prezzati a 5/25 USD per Mtok e finivano nel merito del "
+            "gateway. Peggio: il nome originale veniva scartato in traduzione, "
+            "quindi nemmeno il registro poteva accorgersene - `requested_model` "
+            "conteneva gia' il ripiego."
+        ),
+        effect=(
+            "Le richieste su modelli fuori catalogo escono dal confronto "
+            "(`baseline_ingenua_usd` a zero) e la nota dice il nome e la tariffa "
+            "usata; la spesa resta registrata e il tetto continua a contarla, "
+            "perche' un guasto degrada e non abbatte. Il difetto e' della stessa "
+            "famiglia degli altri sette del metro trovati in questo progetto: non "
+            "produce un errore, produce **un numero plausibile**. Vale anche come "
+            "risposta a 'e con un LLM locale?' - senza questo, puntare il gateway "
+            "su un modello locale avrebbe prodotto dollari risparmiati a tariffe "
+            "Opus su token che non costano niente."
+        ),
+    ),
 
 ]

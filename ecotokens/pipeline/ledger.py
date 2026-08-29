@@ -15,7 +15,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..pricing import Usage, baseline_cost_usd, baseline_ingenua_usd, cost_usd
+from ..pricing import (
+    Usage,
+    baseline_cost_usd,
+    baseline_ingenua_usd,
+    cost_usd,
+    modello_riconosciuto,
+)
 from ..tokens import estimate_prompt_tokens
 from .base import SOURCE_API, BaseStage, RequestContext
 
@@ -163,6 +169,22 @@ class LedgerStage(BaseStage):
             # client senza di esso avrebbe evitato la chiamata. Qui le due
             # baseline coincidono, ed e' il caso in cui il gateway vale di piu'.
             ctx.baseline_ingenua_usd = baseline
+
+        # Un nome di modello che non e' nel catalogo viene servito lo stesso -
+        # un guasto degrada, non abbatte - ma il suo costo e' calcolato con le
+        # tariffe di un modello **diverso**, quindi ogni cifra che ne discende
+        # e' inventata. Azzerare la baseline confrontabile toglie la richiesta
+        # dal merito del gateway senza toccare il resto: la spesa resta
+        # registrata, il tetto continua a contarla, e la pagina dice su quante
+        # richieste si regge il confronto.
+        if ctx.nome_richiesto_grezzo and not modello_riconosciuto(
+            ctx.nome_richiesto_grezzo
+        ):
+            ctx.baseline_ingenua_usd = 0.0
+            ctx.note(
+                f"modello '{ctx.nome_richiesto_grezzo}' sconosciuto: prezzato "
+                f"come {ctx.model}, escluso dal confronto"
+            )
 
         ctx.attribuisci(self.name, ctx.notes[prima_delle_proprie:])
         await ctx.store.record_usage(

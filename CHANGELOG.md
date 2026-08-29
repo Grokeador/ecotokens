@@ -9,6 +9,24 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/), le
 versioni [SemVer](https://semver.org/lang/it/). Finché la maggiore è 0, un
 cambio della minore può contenere rotture: sono elencate per prime.
 
+## [Non rilasciato]
+
+### Corretto
+
+- **Un nome di modello sconosciuto non produce più cifre inventate.** Il
+  gateway ripiega sul modello predefinito quando non riconosce un nome — e
+  continua a farlo, perché deve servire la richiesta — ma finora prezzava anche
+  il ripiego: `llama-3.3-70b`, `qwen2.5-coder:32b` o un `claude-opuss-5`
+  sbagliato di battitura finivano nel conto a 5/25 USD per Mtok, le tariffe di
+  Opus 5. Ora queste richieste escono dal confronto (`richieste_confrontabili`
+  non le conta) e la risposta porta una nota con il nome ricevuto e la tariffa
+  effettivamente usata. La spesa resta registrata e il tetto continua a
+  contarla.
+- Il nome del modello **come il client lo ha scritto** arriva ora fino al
+  registro. Prima veniva normalizzato in traduzione e nessuno stadio a valle
+  poteva più accorgersi che il costo stava per essere calcolato con le tariffe
+  di un altro modello.
+
 ## [0.2.0] — 2026-08-29
 
 Una versione di **robustezza e onestà dei numeri**. Il gateway non può più far
