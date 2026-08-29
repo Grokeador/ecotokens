@@ -113,7 +113,8 @@ Il dettaglio di ciascuna sta nel README, sezione «Trappole».
 
 ## Comandi
 
-`serve` `stats` `purge` `diagnosi` `assunzioni` `verifica` · misure: `bench`
+`serve` `stats` `purge` `diagnosi` `assunzioni` `verifica` `consiglia` ·
+misure: `bench`
 `ablate` `optimize` `compaction` `prompt` `substitutions` `cachekey` `overhead`
 `pruning` `ritenzione` `memoria` `ceiling` `cachewrites` `streaming` · pagine:
 `/impostazioni` `/quadro` `/` `/admin/dashboard`

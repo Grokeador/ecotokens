@@ -199,6 +199,83 @@ def diagnosi(
 
 
 @app.command()
+def consiglia(
+    config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
+) -> None:
+    """Che forma ha il **tuo** traffico, e cosa conviene accendere per quella.
+
+    Tutte le percentuali che questo progetto pubblica sono medie su un corpus
+    di scenari, e la stessa configurazione rende +52% su un ciclo agentico e
+    -0,2% su molti utenti a turno singolo. Una media fra quei due non descrive
+    nessuno.
+
+    Il comando non misura niente di nuovo: legge il traffico gia' registrato e
+    accosta a ogni consiglio il numero misurato **per quel regime**. Dove il
+    campione e' troppo piccolo per decidere, lo dice invece di consigliare.
+    """
+    from .consiglia import CAMPIONE_MINIMO, DESCRIZIONE, analizza
+
+    settings = load_settings(config)
+
+    async def _raccogli():
+        database = Database(settings.storage.path)
+        database.connect()
+        store = Store(database)
+        try:
+            return await store.profilo_traffico()
+        finally:
+            database.close()
+
+    rapporto = analizza(asyncio.run(_raccogli()), settings)
+
+    if not rapporto.sufficiente:
+        console.print(
+            f"[yellow]Campione troppo piccolo:[/] {rapporto.campione} richieste "
+            f"registrate, ne servono almeno {CAMPIONE_MINIMO}."
+        )
+        console.print(
+            "[dim]La quota di sessioni a turno singolo e il tasso di "
+            "continuazione sono rapporti: su poche richieste oscillano fra 0 e "
+            "1 senza dire niente. Meglio nessun consiglio che uno inventato con "
+            "la faccia di uno misurato.[/]"
+        )
+        raise typer.Exit(code=0)
+
+    segnali = rapporto.segnali
+    console.print()
+    console.print(
+        f"[bold]Il tuo traffico somiglia a:[/] {DESCRIZIONE[rapporto.regime]}"
+    )
+    console.print(f"[dim]su {rapporto.campione:,} richieste registrate[/]")
+
+    tavola = Table(title="I segnali su cui si regge questa lettura")
+    tavola.add_column("Segnale")
+    tavola.add_column("Osservato", justify="right")
+    tasso = segnali.get("tasso_continuazione")
+    for etichetta, valore in (
+        ("turni per sessione (media)", f"{segnali.get('turni_medi', 0):.1f}"),
+        ("sessioni a turno singolo", f"{segnali.get('quota_turno_singolo', 0):.0%}"),
+        ("richieste servite da cache", f"{segnali.get('quota_da_cache', 0):.0%}"),
+        ("richieste con potatura attiva", f"{segnali.get('quota_potatura', 0):.0%}"),
+        ("prompt medio", f"{segnali.get('prompt_medio', 0):,.0f} token"),
+        (
+            "conversazioni che proseguono",
+            f"{tasso:.0%}" if tasso is not None else "campione insufficiente",
+        ),
+    ):
+        tavola.add_row(etichetta, valore)
+    console.print(tavola)
+
+    for consiglio in rapporto.consigli:
+        console.print()
+        console.print(f"[bold]{consiglio.titolo}[/]")
+        console.print(f"  [cyan]{consiglio.verdetto}[/]")
+        console.print(f"  [dim]{consiglio.perche}[/]")
+        if consiglio.azione:
+            console.print(f"  [yellow]{consiglio.azione}[/]")
+
+
+@app.command()
 def assunzioni() -> None:
     """Cosa il progetto da' per vero senza averlo verificato.
 

@@ -55,6 +55,7 @@ SOLA_LETTURA = [
     "quadro",
     "purge",
     "substitutions",
+    "consiglia",
 ]
 
 # Comandi di misura: da 9 a 63 secondi l'uno, perche' ognuno gira un carico

@@ -13,6 +13,16 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ### Nuovo
 
+- **`ecotokens consiglia`** — legge il traffico già registrato, riconosce quale
+  dei quattro regimi misurati gli somiglia (ciclo agentico, domande ripetute,
+  chat che cresce, turno singolo) e mette accanto a ogni consiglio **il numero
+  misurato per quel regime**, non una media. Tutte le percentuali che il
+  progetto pubblica sono medie su un corpus, e la stessa configurazione rende
+  +52% su un ciclo agentico e −0,2% su turni singoli: una media fra quei due non
+  descrive nessuno. Sotto le venti richieste il comando tace invece di
+  consigliare — la quota di sessioni a turno singolo e il tasso di continuazione
+  sono rapporti, e su pochi campioni oscillano senza dire niente.
+
 - **Il caso agentico ha i suoi test.** La porta nativa `/v1/messages` era
   documentata come «non provato» proprio mentre il carico agentico era il caso
   migliore misurato del progetto (+52%). Ora `tests/test_agentico.py` passa una

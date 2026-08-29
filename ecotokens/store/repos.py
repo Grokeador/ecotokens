@@ -760,6 +760,71 @@ class Store:
         dati["aux_ratio"] = (float(dati.get("aux_cost_usd") or 0) / costo) if costo else 0.0
         return dati
 
+    async def profilo_traffico(self) -> dict[str, Any]:
+        """I segnali grezzi con cui riconoscere che forma ha il traffico.
+
+        Nessuna colonna nuova: tutto viene da cio' che il registro gia' scrive.
+        Il metodo **non interpreta** - restituisce numeri, e la lettura sta in
+        `ecotokens/consiglia.py`. La separazione non e' formale: un metodo che
+        classificasse renderebbe impossibile guardare i segnali quando la
+        classificazione sembra sbagliata.
+
+        Una nota su cosa **non** c'e': l'impronta del prefisso stabile
+        (`stable_prefix_hash`) vive solo in memoria, per rispondere a
+        "l'abbiamo gia' visto negli ultimi cinque minuti". Non e' sul disco,
+        quindi la quota di prefisso condiviso fra sessioni si stima per via
+        indiretta - sessioni a turno singolo che rileggono comunque dalla cache
+        - ed e' una stima, non una misura.
+        """
+        totali = await self.db.query_one(
+            """SELECT COUNT(*)                                AS richieste,
+                      COUNT(DISTINCT session_id)              AS sessioni,
+                      COALESCE(AVG(input_tokens + cache_creation_tokens
+                                   + cache_read_tokens), 0)   AS prompt_medio,
+                      COALESCE(SUM(cache_read_tokens), 0)     AS cache_read_tokens
+               FROM usage_events"""
+        )
+        sessioni = await self.db.query_one(
+            """SELECT COUNT(*)                                    AS totali,
+                      COALESCE(AVG(turn_count), 0)                AS turni_medi,
+                      COALESCE(SUM(CASE WHEN turn_count <= 1
+                                        THEN 1 ELSE 0 END), 0)    AS a_turno_singolo
+               FROM sessions"""
+        )
+        per_fonte = await self.db.query(
+            "SELECT source, COUNT(*) AS richieste FROM usage_events GROUP BY source"
+        )
+
+        dati = dict(totali) if totali else {}
+        dati["sessioni_registrate"] = int((sessioni or {})["totali"] or 0) if sessioni else 0
+        dati["turni_medi"] = float((sessioni or {})["turni_medi"] or 0) if sessioni else 0.0
+        singole = int((sessioni or {})["a_turno_singolo"] or 0) if sessioni else 0
+        dati["quota_turno_singolo"] = (
+            singole / dati["sessioni_registrate"] if dati["sessioni_registrate"] else 0.0
+        )
+
+        richieste = int(dati.get("richieste") or 0)
+        da_cache = sum(
+            int(riga["richieste"])
+            for riga in per_fonte
+            if str(riga["source"]) in ("exact_cache", "semantic_cache")
+        )
+        dati["quota_da_cache"] = da_cache / richieste if richieste else 0.0
+
+        # La potatura del contesto scatta quando ci sono almeno 20.000 token di
+        # `tool_result` da potare. E' quindi un indicatore di traffico agentico
+        # piu' diretto di qualunque conteggio di token: non misura quanto e'
+        # grosso il prompt, ma di **cosa** e' fatto.
+        attivita = await self.stage_activity()
+        dati["quota_potatura"] = 0.0
+        for voce in attivita:
+            if voce.get("stage") == "context" and voce.get("enabled_in"):
+                dati["quota_potatura"] = voce["acted_in"] / voce["enabled_in"]
+                break
+
+        dati["tasso_continuazione"] = await self.tasso_continuazione()
+        return dati
+
     async def recent_events(self, limit: int = 25) -> list[dict[str, Any]]:
         """Le ultime richieste, con cio' che ogni stadio ha fatto a ciascuna."""
         righe = await self.db.query(

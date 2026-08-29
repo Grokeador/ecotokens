@@ -1546,8 +1546,9 @@ poi la cache venga davvero letta.
 | `ecotokens serve` | avvia il gateway |
 | `ecotokens stats` | riepilogo di consumi, costi e risparmio |
 | `ecotokens diagnosi` | controlla l'installazione: nove verifiche, e cosa fare per ognuna |
+| `ecotokens consiglia` | legge il **tuo** traffico e dice cosa conviene accendere per quella forma |
 | `ecotokens assunzioni` | cosa il progetto dà per vero senza averlo verificato |
-| `ecotokens verifica --live` | controlla quelle assunzioni contro l'API vera |
+| `ecotokens verifica --live` | controlla quelle assunzioni contro l'API vera (12 chiamate) |
 | `ecotokens purge` | rimuove le voci di cache scadute |
 | `ecotokens purge --everything` | svuota le cache |
 | `ecotokens bench` | misura lo stesso carico con e senza gateway |
