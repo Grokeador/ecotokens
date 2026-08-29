@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs
 
 import anthropic
 from fastapi import FastAPI, Request
@@ -232,6 +234,23 @@ class Gateway:
         response["ecotokens"] = ctx.meta()
         return response, ctx
 
+    def riconfigura(self, settings: Settings) -> None:
+        """Sostituisce impostazioni e pipeline senza riavviare il processo.
+
+        Il client e il database restano quelli: le credenziali e il percorso dei
+        dati non passano dal pannello, e ricostruirli mentre delle richieste
+        sono in volo significherebbe chiudere una connessione sotto i piedi di
+        chi la sta usando.
+
+        La pipeline nuova prende il posto della vecchia in un'assegnazione
+        sola. Una richiesta gia' partita continua con la lista che aveva
+        raccolto - `Pipeline.before` la scorre - quindi non esiste il caso di
+        una richiesta servita per meta' con la vecchia configurazione e per
+        meta' con la nuova.
+        """
+        self.settings = settings
+        self.pipeline = self._build_pipeline(settings)
+
     async def startup(self) -> None:
         self.database.connect()
         logger.info(
@@ -245,6 +264,19 @@ class Gateway:
         await self.store.prune_cache(self.settings.exact_cache.max_entries)
         self.database.close()
         await self.client.close()
+
+
+def _dove_scrivere() -> Path:
+    """Il file che il pannello riscrive.
+
+    Lo stesso che `load_settings` legge all'avvio, cosi' cio' che si salva e'
+    cio' che si ritrova. Se non esiste ancora, viene creato nella cartella di
+    lavoro - dove il gateway cerchera' al riavvio.
+    """
+    from .config import DEFAULT_CONFIG_NAMES, _find_config
+
+    trovato = _find_config(None)
+    return Path(trovato) if trovato else Path(DEFAULT_CONFIG_NAMES[0])
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -279,7 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         vivo e non dice niente di nessuno.
         """
         expected = settings.server.api_key
-        protetto = request.url.path in {"/", "/ui", "/quadro"} or request.url.path.startswith(
+        protetto = request.url.path in {"/", "/ui", "/quadro", "/impostazioni"} or request.url.path.startswith(
             ("/v1", "/admin")
         )
         if expected and protetto:
@@ -318,6 +350,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .console import render_console
 
         return HTMLResponse(content=render_console())
+
+    @app.get("/impostazioni", response_class=HTMLResponse)
+    async def impostazioni(request: Request) -> HTMLResponse:
+        from .pannello import render_pannello
+
+        gateway = request.app.state.gateway
+        return HTMLResponse(
+            content=render_pannello(gateway.settings, percorso_config=_dove_scrivere())
+        )
+
+    @app.post("/impostazioni", response_class=HTMLResponse)
+    async def salva_impostazioni(request: Request) -> HTMLResponse:
+        """Valida, applica alla pipeline viva, poi scrive il file.
+
+        In quest'ordine di proposito: se la validazione fallisce non si e'
+        toccato niente, e se la scrittura fallisce - disco pieno, permessi - il
+        gateway sta comunque girando con cio' che l'utente ha chiesto, e il
+        messaggio lo dice. L'ordine opposto lascerebbe un file che promette una
+        configurazione che il processo non ha.
+        """
+        from .pannello import ModificaRifiutata, prepara, render_pannello, scrivi_configurazione
+
+        gateway = request.app.state.gateway
+        # `request.form()` di Starlette pretende `python-multipart`, che
+        # servirebbe per gli allegati. Questo modulo non ne ha e viaggia
+        # urlencoded: la libreria standard basta, e una dipendenza in piu' per
+        # una pagina sola non si giustifica.
+        corpo = (await request.body()).decode("utf-8", errors="replace")
+        campi = parse_qs(corpo, keep_blank_values=True)
+        # Le caselle mandano due valori - il nascosto "false" e lo spuntato
+        # "true" - e l'ultimo vince: e' quello che rappresenta lo stato voluto.
+        # Senza il nascosto, spegnere qualcosa sarebbe indistinguibile dal non
+        # averlo toccato, perche' una casella non spuntata non viene inviata.
+        modifiche = {chiave: valori[-1] for chiave, valori in campi.items()}
+
+        try:
+            nuove, cambiati = prepara(gateway.settings, modifiche)
+        except (ModificaRifiutata, ValueError) as errore:
+            return HTMLResponse(
+                content=render_pannello(
+                    gateway.settings,
+                    percorso_config=_dove_scrivere(),
+                    esito={"errore": f"Niente e' stato cambiato. {errore}"},
+                ),
+                status_code=400,
+            )
+
+        gateway.riconfigura(nuove)
+        esito: dict[str, Any] = {"cambiati": cambiati, "file": str(_dove_scrivere())}
+        if cambiati:
+            try:
+                scrivi_configurazione(nuove, _dove_scrivere())
+            except OSError as errore:
+                esito = {
+                    "errore": (
+                        f"Applicato al gateway, ma non scritto su file ({errore}): "
+                        "al prossimo riavvio tornera' come prima."
+                    )
+                }
+        return HTMLResponse(
+            content=render_pannello(nuove, percorso_config=_dove_scrivere(), esito=esito)
+        )
 
     @app.get("/quadro", response_class=HTMLResponse)
     async def quadro(request: Request) -> HTMLResponse:

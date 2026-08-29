@@ -344,13 +344,32 @@ che si è più tentati di lasciar fuori. La console non esce mai in rete: nessun
 font remoto, nessun CDN — mostra il traffico dell'utente, e non ha motivo di
 segnalare a nessuno quando la si guarda.
 
-### Le tre pagine, e perché sono tre
+### Le quattro pagine, e perché sono quattro
 
 | | risponde a | quando |
 |---|---|---|
+| **`/impostazioni`** | cosa deve fare il gateway | quando si cambia idea |
 | **`/quadro`** | tutti i parametri, com'è messo adesso | si tiene aperta |
 | **`/`** (console) | cosa sta succedendo al traffico vero | si guarda mentre gira |
 | **`/admin/dashboard`** | come si è arrivati a un numero | si legge una volta |
+
+Il **pannello** è l'unica che decide invece di mostrare, e da lì vengono le sue
+regole. Ogni voce dice cosa costa, col numero misurato accanto: un pannello che
+elenca opzioni senza dire cosa fanno sposta la decisione sull'utente senza
+dargli niente per prenderla. Ciò che cambia il **contenuto** delle risposte —
+declassamento, effort sempre basso, cache semantica — è segnato, perché chi lo
+accende deve saperlo mentre lo accende.
+
+Le modifiche valgono **subito** per le richieste successive: la pipeline viene
+ricostruita, non serve riavviare. Poi vengono scritte in `ecotokens.toml`, che
+il pannello **rigenera** — i commenti scritti a mano lì dentro non
+sopravvivono, e la pagina lo dice.
+
+Quattro cose restano fuori, e non per dimenticanza: **credenziali** (una chiave
+non si scrive in un campo di un modulo web), **indirizzo e porta** (cambiarli da
+una pagina raggiungibile via rete è il modo più rapido di aprirsi al mondo per
+sbaglio), **percorso del database** (la connessione è già aperta), **modello
+predefinito** (lo sceglie il client a ogni richiesta).
 
 Il **quadro** è un cruscotto: nessuna prosa, nove riquadri su una schermata
 sola, 10 KB contro i 100 della dashboard. Non misura niente — legge le misure
@@ -1349,6 +1368,8 @@ poi la cache venga davvero letta.
 | `GET /v1/models` | catalogo dei modelli, con prezzi e finestra di contesto |
 | `GET /` (o `/ui`) | console dal vivo del traffico vero |
 | `GET /quadro` | cruscotto compatto, tutti i parametri su una schermata |
+| `GET /impostazioni` | pannello di controllo: cosa deve fare il gateway |
+| `POST /impostazioni` | applica le modifiche e riscrive la configurazione |
 | `GET /admin/live` | gli stessi dati in JSON, sola lettura |
 | `GET /admin/stats` | statistiche di consumo e risparmio |
 | `GET /admin/sessions` | sessioni riconosciute |

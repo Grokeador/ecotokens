@@ -899,5 +899,28 @@ TUNING_LOG: list[TuningEntry] = [
             "una funzione che si ripaga."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Il pannello faceva vincere il profilo su una scelta esplicita",
+        finding=(
+            "Il pannello di controllo applica il profilo riscrivendo i campi che "
+            "governa - declassamento, politica dell'effort - a meno che l'utente non "
+            "li abbia decisi lui nello stesso salvataggio. Il codice riconosceva "
+            "quelli **risultati diversi** dal valore corrente, non quelli **inviati**: "
+            "chi passava dal profilo prudente all'aggressivo spegnendo nello stesso "
+            "momento il declassamento non otteneva niente, perche' `false` coincideva "
+            "col valore che c'era gia' e quindi non compariva fra i cambiamenti."
+        ),
+        effect=(
+            "\"Non e' cambiato\" non vuol dire \"non l'ha chiesto\", e trattarli allo "
+            "stesso modo faceva ignorare una decisione dell'utente in silenzio - sul "
+            "campo che decide se le risposte cambiano. Adesso si guardano le chiavi "
+            "inviate. L'ha trovato un test scritto sul comportamento voluto, non sul "
+            "codice: e' la seconda volta in questo progetto che un difetto di questa "
+            "forma - una condizione plausibile e non equivalente a quella giusta - "
+            "viene fuori solo scrivendo cosa ci si aspetta prima di guardare come e' "
+            "fatto."
+        ),
+    ),
 
 ]

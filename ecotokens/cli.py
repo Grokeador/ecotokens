@@ -127,7 +127,11 @@ def serve(
     )
     console.print(
         f"Quadro:           [cyan]http://{host}:{port}/quadro[/] "
-        "[dim]- tutti i parametri su una schermata[/]\n"
+        "[dim]- tutti i parametri su una schermata[/]"
+    )
+    console.print(
+        f"Impostazioni:     [cyan]http://{host}:{port}/impostazioni[/] "
+        "[dim]- cosa deve fare, con il prezzo di ogni scelta[/]\n"
     )
 
     from .server import create_app

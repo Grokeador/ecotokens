@@ -20,9 +20,26 @@ import pytest
 from ecotokens.store.db import Database
 
 
+def _sotto_strumentazione() -> bool:
+    """Vero se coverage sta contando le righe mentre il test gira.
+
+    Un test di velocita' eseguito sotto lo strumento misura anche lo strumento:
+    la copertura moltiplica i tempi per tre o quattro, e il test fallisce
+    dicendo una cosa falsa sul gateway. Saltarlo la' e' l'unica risposta
+    onesta - abbassare la soglia fino a farlo passare lo renderebbe incapace
+    di cogliere una regressione vera.
+    """
+    import sys
+
+    return "coverage" in sys.modules and sys.gettrace() is not None
+
+
 # --- il trasporto verso il database ---------------------------------------
 
 
+@pytest.mark.skipif(
+    _sotto_strumentazione(), reason="misura la velocita': coverage la falserebbe"
+)
 async def test_una_query_breve_non_paga_un_salto_fra_thread():
     """Misurato: 6,9 us dentro SQLite, 448 attraverso `asyncio.to_thread`.
 
@@ -81,6 +98,9 @@ async def test_una_query_pesante_resta_su_un_thread():
 # --- il soffitto del gateway ----------------------------------------------
 
 
+@pytest.mark.skipif(
+    _sotto_strumentazione(), reason="misura la velocita': coverage la falserebbe"
+)
 @pytest.mark.parametrize("richieste", [30])
 async def test_il_gateway_regge_almeno_cinquanta_richieste_al_secondo(richieste):
     """Un limite generoso: serve a cogliere un crollo, non una fluttuazione.
