@@ -281,7 +281,7 @@ def purge(
     config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
     everything: bool = typer.Option(False, "--everything", help="Svuota le cache, non solo le voci scadute"),
 ) -> None:
-    """Rimuove le voci di cache scadute (o tutte, con --everything)."""
+    """Pulisce le cache scadute e compatta il registro dei consumi."""
     settings = load_settings(config)
 
     async def _purge():
@@ -289,14 +289,30 @@ def purge(
         database.connect()
         store = Store(database)
         try:
+            # La compattazione va fatta in ogni caso: il registro dei consumi
+            # cresce con una riga per richiesta, e senza questo nessun comando
+            # lo rimpicciolisce mai. I totali non ne risentono - vengono
+            # aggregati prima di cancellare - ma il dettaglio dei giorni
+            # vecchi sparisce, quindi lo si dice.
+            compattati = await store.compatta_consumi(settings.storage.keep_detail_days)
             if everything:
                 await store.clear_caches()
-                return None
-            return await store.prune_cache(settings.exact_cache.max_entries)
+                return None, compattati
+            return await store.prune_cache(settings.exact_cache.max_entries), compattati
         finally:
             database.close()
 
-    total = asyncio.run(_purge())
+    total, compattati = asyncio.run(_purge())
+    if compattati["compattate"]:
+        console.print(
+            f"[green]Consumi compattati:[/] {compattati['compattate']:,} richieste "
+            f"di {compattati['giorni']} giorni prima del {compattati['confine']} "
+            "ridotte a un riepilogo giornaliero."
+        )
+        console.print(
+            "[dim]I totali di costo e risparmio restano identici; spariscono "
+            "latenza, note e attribuzione per stadio di quei giorni.[/]"
+        )
     if total is None:
         console.print("[green]Cache svuotate.[/]")
     else:
@@ -610,6 +626,43 @@ def memoria() -> None:
         "e' piccolo e la scrittura in cache si paga 1,25x. Vince su un altro asse - "
         "il recupero per pertinenza e' lessicale, e su fatti scritti telegrafici non "
         "trova niente. Vedi [cyan]ecotokens ritenzione[/], scenario parole-diverse."
+    )
+
+
+@app.command()
+def streaming(
+    scenario: str = typer.Option("chat", help="Quale carico del corpus usare"),
+) -> None:
+    """Verifica che il risparmio sia lo stesso quando la risposta arriva a pezzi."""
+    from .bench import measure_streaming
+
+    esiti = asyncio.run(measure_streaming(scenario))
+
+    tabella = Table(title=f"Lo stesso carico ({scenario}) servito nei due modi")
+    tabella.add_column("Modalita'")
+    tabella.add_column("Richieste", justify="right")
+    tabella.add_column("Token di prompt", justify="right")
+    tabella.add_column("Da cache", justify="right")
+    tabella.add_column("Costo", justify="right")
+    for voce in esiti:
+        tabella.add_row(
+            voce.modalita,
+            f"{voce.requests:,}",
+            f"{voce.prompt_tokens:,}",
+            f"{voce.cache_read_tokens:,}",
+            f"${voce.cost_usd:.5f}",
+        )
+    console.print(tabella)
+
+    if len(esiti) == 2 and esiti[0].cost_usd:
+        scarto = abs(esiti[1].cost_usd - esiti[0].cost_usd) / esiti[0].cost_usd
+        stile = "green" if scarto < 0.01 else "yellow"
+        console.print(f"[{stile}]Scarto: {scarto * 100:.2f}%[/]")
+    console.print(
+        "[dim]Il percorso in streaming vive nella rotta HTTP, non in "
+        "Gateway.complete: il resto del banco non lo tocca, e per questo il "
+        "corpus non ne conteneva nemmeno una richiesta su cinquantuno - mentre "
+        "la maggior parte delle interfacce di chat trasmette.[/]"
     )
 
 

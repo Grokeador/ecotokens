@@ -8,7 +8,7 @@ import time
 import uuid
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any
 
@@ -377,8 +377,13 @@ class Store:
         """Spesa effettiva nel giorno o nel mese indicato."""
         if column not in {"day", "month"}:
             raise ValueError("column deve essere 'day' o 'month'")
+        # Il riepilogo ha `day`, non `month`: il mese si ricava dal prefisso.
+        confronto = "day = ?" if column == "day" else "substr(day, 1, 7) = ?"
         row = await self.db.query_one(
-            f"SELECT COALESCE(SUM(cost_usd), 0) AS total FROM usage_events WHERE {column} = ?",
+            f"""SELECT COALESCE(SUM(cost_usd), 0) AS total FROM (
+                    SELECT day, cost_usd FROM usage_events
+                    UNION ALL SELECT day, cost_usd FROM usage_daily
+                ) WHERE {confronto}""",
             (value,),
         )
         return float(row["total"]) if row else 0.0
@@ -388,9 +393,29 @@ class Store:
         day, month = _day_month(_now())
         return await self.spend_since("day", day), await self.spend_since("month", month)
 
+    # Dettaglio e riepiloghi in una vista sola. Dopo `compatta_consumi` una
+    # parte della storia vive in `usage_daily` e il resto in `usage_events`:
+    # sommare solo il secondo farebbe **calare** i totali storici a ogni
+    # compattazione, cioe' trasformerebbe una pulizia in una falsificazione.
+    # Le colonne del dettaglio che il riepilogo non ha - latenza, note, stadi -
+    # restano fuori apposta: sono le domande a cui, passati i giorni di
+    # dettaglio, il gateway non sa piu' rispondere, e va detto invece di
+    # rispondere con uno zero.
+    _CONSUMI = """
+        SELECT day, model, source, 1 AS requests, input_tokens, output_tokens,
+               cache_creation_tokens, cache_read_tokens, cost_usd,
+               baseline_cost_usd, saved_usd
+        FROM usage_events
+        UNION ALL
+        SELECT day, model, source, requests, input_tokens, output_tokens,
+               cache_creation_tokens, cache_read_tokens, cost_usd,
+               baseline_cost_usd, saved_usd
+        FROM usage_daily
+    """
+
     async def stats(self) -> dict[str, Any]:
         totals = await self.db.query_one(
-            """SELECT COUNT(*)                              AS requests,
+            f"""SELECT COALESCE(SUM(requests), 0)            AS requests,
                       COALESCE(SUM(input_tokens), 0)         AS input_tokens,
                       COALESCE(SUM(output_tokens), 0)        AS output_tokens,
                       COALESCE(SUM(cache_creation_tokens),0) AS cache_creation_tokens,
@@ -398,23 +423,28 @@ class Store:
                       COALESCE(SUM(cost_usd), 0)             AS cost_usd,
                       COALESCE(SUM(baseline_cost_usd), 0)    AS baseline_cost_usd,
                       COALESCE(SUM(saved_usd), 0)            AS saved_usd
-               FROM usage_events"""
+               FROM ({self._CONSUMI})""",
+            pesante=True,
         )
         by_source = await self.db.query(
-            """SELECT source, COUNT(*) AS requests, COALESCE(SUM(saved_usd), 0) AS saved_usd
-               FROM usage_events GROUP BY source"""
+            f"""SELECT source, SUM(requests) AS requests,
+                      COALESCE(SUM(saved_usd), 0) AS saved_usd
+               FROM ({self._CONSUMI}) GROUP BY source""",
+            pesante=True,
         )
         by_model = await self.db.query(
-            """SELECT model, COUNT(*) AS requests,
+            f"""SELECT model, SUM(requests) AS requests,
                       COALESCE(SUM(cost_usd), 0)  AS cost_usd,
                       COALESCE(SUM(saved_usd), 0) AS saved_usd
-               FROM usage_events GROUP BY model ORDER BY cost_usd DESC"""
+               FROM ({self._CONSUMI}) GROUP BY model ORDER BY cost_usd DESC""",
+            pesante=True,
         )
         by_day = await self.db.query(
-            """SELECT day, COUNT(*) AS requests,
+            f"""SELECT day, SUM(requests) AS requests,
                       COALESCE(SUM(cost_usd), 0)  AS cost_usd,
                       COALESCE(SUM(saved_usd), 0) AS saved_usd
-               FROM usage_events GROUP BY day ORDER BY day DESC LIMIT 30"""
+               FROM ({self._CONSUMI}) GROUP BY day ORDER BY day DESC LIMIT 30""",
+            pesante=True,
         )
         result = dict(totals) if totals else {}
         prompt_tokens = (
@@ -433,7 +463,7 @@ class Store:
         result["by_day"] = [dict(row) for row in by_day]
         return result
 
-    async def cache_write_report(self, limit: int = 20_000) -> dict[str, Any]:
+    async def cache_write_report(self, limit: int = 2_000) -> dict[str, Any]:
         """Quante scritture in cache del traffico vero non sono state rilette.
 
         La stessa domanda che `ecotokens cachewrites` pone al simulatore, qui
@@ -453,13 +483,25 @@ class Store:
         from ..pipeline.base import SOURCE_API
 
         rows = await self.db.query(
+            # Prima si prendono le N piu' recenti per `id` - che e' la chiave
+            # primaria, quindi il taglio e' immediato - e solo dopo si ordina
+            # per sessione. Scritto al contrario, `ORDER BY session_id` doveva
+            # ordinare l'intera tabella per poter applicare il LIMIT, e la
+            # finestra non serviva a niente: su ventimila eventi la query
+            # restava a 552 ms anche chiedendone duemila.
             """SELECT session_id, id, model, cache_ttl,
                       cache_read_tokens, cache_creation_tokens
-               FROM usage_events
-               WHERE source = ?
-               ORDER BY session_id, ts, id
-               LIMIT ?""",
+               FROM (
+                   SELECT session_id, id, model, cache_ttl,
+                          cache_read_tokens, cache_creation_tokens, ts
+                   FROM usage_events
+                   WHERE source = ?
+                   ORDER BY id DESC
+                   LIMIT ?
+               )
+               ORDER BY session_id, ts, id""",
             (SOURCE_API, limit),
+            pesante=True,
         )
         eventi = [
             CacheEvent(
@@ -471,7 +513,13 @@ class Store:
             )
             for riga in rows
         ]
-        return audit_cache_writes(eventi).to_dict()
+        conto = audit_cache_writes(eventi).to_dict()
+        # La finestra conta: una scrittura fatta prima di essa sembra una
+        # scrittura di coda, perche' la rilettura che l'ha ripagata e' fuori
+        # dall'orizzonte. Dirlo e' l'unico modo di non far leggere come
+        # "sprecato" cio' che e' solo "non piu' visibile".
+        conto["finestra"] = len(eventi)
+        return conto
 
     @staticmethod
     def _forma_della_nota(nota: str) -> str:
@@ -483,7 +531,7 @@ class Store:
         """
         return _NUMERI.sub("N", nota)
 
-    async def stage_activity(self, limit: int = 20_000) -> list[dict[str, Any]]:
+    async def stage_activity(self, limit: int = 2_000) -> list[dict[str, Any]]:
         """Quante volte ogni stadio ha fatto qualcosa, sul traffico vero.
 
         E' la domanda che il progetto si e' imposto di fare **prima** di
@@ -504,7 +552,9 @@ class Store:
         solo fatto di essere stato chiamato conterebbe tutto, sempre.
         """
         righe = await self.db.query(
-            "SELECT stages FROM usage_events ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT stages FROM usage_events ORDER BY id DESC LIMIT ?",
+            (limit,),
+            pesante=True,
         )
         accesi: Counter[str] = Counter()
         agiti: Counter[str] = Counter()
@@ -558,7 +608,7 @@ class Store:
         esito.sort(key=lambda voce: (-voce["ratio"], voce["stage"]))
         return [{**voce, "requests_considered": registrate} for voce in esito]
 
-    async def latency_report(self, limit: int = 20_000) -> list[dict[str, Any]]:
+    async def latency_report(self, limit: int = 2_000) -> list[dict[str, Any]]:
         """Quanto ci mette una risposta, separata per provenienza.
 
         E' l'altra faccia del risparmio: un hit di cache costa zero token, e la
@@ -570,6 +620,7 @@ class Store:
             """SELECT source, latency_ms FROM usage_events
                WHERE latency_ms IS NOT NULL ORDER BY id DESC LIMIT ?""",
             (limit,),
+            pesante=True,
         )
         per_fonte: dict[str, list[float]] = {}
         for riga in righe:
@@ -792,6 +843,83 @@ class Store:
             "UPDATE memory_facts SET uses = uses + 1, last_used_at = ? WHERE id = ?",
             [(now, fact_id) for fact_id in fact_ids],
         )
+
+    async def compatta_consumi(self, keep_detail_days: int) -> dict[str, int]:
+        """Aggrega per giorno il dettaglio piu' vecchio, poi lo cancella.
+
+        Il dettaglio - una riga per richiesta, con note e attribuzione per
+        stadio - serve a rispondere a "cosa e' successo stamattina". I totali
+        servono per sempre. Tenere il primo per rispondere al secondo fa
+        crescere il registro senza limite e rallenta ogni pagina che lo legge.
+
+        L'aggregazione precede la cancellazione **nella stessa chiamata**, e i
+        totali sono sommati in SQL: cancellare e basta renderebbe falso il
+        risparmio storico, che e' esattamente il difetto del metro che questo
+        progetto passa il tempo a correggere. Se qualcosa va storto fra le due,
+        si perde l'aggregazione e non i dati, che e' il verso giusto.
+        """
+        confine = (
+            datetime.now(timezone.utc) - timedelta(days=max(0, keep_detail_days))
+        ).strftime("%Y-%m-%d")
+
+        da_compattare = await self.db.query_one(
+            "SELECT COUNT(*) AS n FROM usage_events WHERE day < ?", (confine,)
+        )
+        quante = int(da_compattare["n"]) if da_compattare else 0
+        if not quante:
+            return {"compattate": 0, "giorni": 0, "confine": confine}
+
+        giorni = await self.db.query_one(
+            "SELECT COUNT(DISTINCT day) AS n FROM usage_events WHERE day < ?", (confine,)
+        )
+        # ON CONFLICT: un giorno gia' riepilogato puo' ricevere altre righe se
+        # la compattazione viene eseguita due volte a distanza di poco.
+        await self.db.execute(
+            """INSERT INTO usage_daily (day, model, source, requests, input_tokens,
+                   output_tokens, cache_creation_tokens, cache_read_tokens,
+                   cost_usd, baseline_cost_usd, saved_usd)
+               SELECT day, model, source, COUNT(*),
+                      SUM(input_tokens), SUM(output_tokens),
+                      SUM(cache_creation_tokens), SUM(cache_read_tokens),
+                      SUM(cost_usd), SUM(baseline_cost_usd), SUM(saved_usd)
+               FROM usage_events WHERE day < ?
+               GROUP BY day, model, source
+               ON CONFLICT(day, model, source) DO UPDATE SET
+                   requests = requests + excluded.requests,
+                   input_tokens = input_tokens + excluded.input_tokens,
+                   output_tokens = output_tokens + excluded.output_tokens,
+                   cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
+                   cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+                   cost_usd = cost_usd + excluded.cost_usd,
+                   baseline_cost_usd = baseline_cost_usd + excluded.baseline_cost_usd,
+                   saved_usd = saved_usd + excluded.saved_usd""",
+            (confine,),
+        )
+        await self.db.execute("DELETE FROM usage_events WHERE day < ?", (confine,))
+        return {
+            "compattate": quante,
+            "giorni": int(giorni["n"]) if giorni else 0,
+            "confine": confine,
+        }
+
+    async def load_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Storico delle misure registrate, dalla piu' recente.
+
+        Sta qui e non nel banco perche' e' una lettura di tabelle: il banco
+        importa l'SDK Anthropic, il simulatore e i carichi - 6,7 secondi - e
+        chi vuole solo rileggere cio' che e' gia' stato misurato non ha motivo
+        di pagarli. Il quadro apriva in 8,4 secondi per questo.
+        """
+        righe = await self.db.query(
+            "SELECT * FROM bench_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        storico: list[dict[str, Any]] = []
+        for riga in righe:
+            risultati = await self.db.query(
+                "SELECT * FROM bench_results WHERE run_id = ?", (riga["id"],)
+            )
+            storico.append({**dict(riga), "results": [dict(r) for r in risultati]})
+        return storico
 
     async def save_retention(self, esiti: list[Any]) -> None:
         """Registra un giro di misura della ritenzione."""

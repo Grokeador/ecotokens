@@ -697,3 +697,23 @@ async def test_la_dashboard_servita_mostra_il_confronto_senza_rimisurare(tmp_pat
     dati = await build_dashboard_data(settings, measure=False, project_root=PROGETTO)
     assert dati["vs_automatico"]["reference_usd"] == 10.0
     assert "Quanto aggiunge a chi usa" in render_dashboard(dati)
+
+
+async def test_lo_streaming_risparmia_quanto_il_resto():
+    """Zero richieste su cinquantuno del corpus erano in streaming.
+
+    Il percorso vive nella rotta HTTP e non in `Gateway.complete`, quindi il
+    banco non poteva raggiungerlo: il risparmio pubblicato descriveva la meta'
+    del traffico reale, perche' la maggior parte delle interfacce di chat
+    trasmette. Misurato, i due percorsi coincidono - ma andava misurato.
+    """
+    from ecotokens.bench import measure_streaming
+
+    intero, a_pezzi = await measure_streaming("chat")
+
+    assert intero.requests == a_pezzi.requests > 0
+    assert a_pezzi.cache_read_tokens == intero.cache_read_tokens, (
+        "la cache deve funzionare uguale nei due percorsi"
+    )
+    scarto = abs(a_pezzi.cost_usd - intero.cost_usd) / intero.cost_usd
+    assert scarto < 0.01, f"i due percorsi divergono del {scarto:.1%}"

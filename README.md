@@ -271,6 +271,52 @@ Ogni campo si può sovrascrivere da ambiente: `ECOTOKENS_<SEZIONE>__<CAMPO>` per
 quelli dentro una sezione, `ECOTOKENS_<CAMPO>` per quelli di primo livello come
 `ECOTOKENS_PROFILO`.
 
+### Quanto traffico regge
+
+Misurato, con l'upstream istantaneo: **96 richieste al secondo**. È il soffitto
+del solo gateway — in produzione l'attesa dell'API è di centinaia di
+millisecondi e lo nasconde, finché il carico non cresce abbastanza da farlo
+emergere.
+
+Erano 63 finché ogni operazione sul database passava da un thread separato: una
+`SELECT 1` costa 6,9 µs dentro SQLite e ne costava 448 attraverso quel salto —
+il trasporto valeva 65 volte il lavoro. Il percorso caldo gira ora sul loop;
+restano su un thread solo le letture delle pagine di osservazione.
+
+Il gateway **non parallelizza**: ventiquattro richieste insieme impiegano quanto
+ventiquattro in fila. Su una macchina che aspetta l'API non si nota; su un
+servizio carico è il muro.
+
+### Il registro non cresce senza limite
+
+`usage_events` ha una riga per richiesta. `ecotokens purge` aggrega in un
+riepilogo giornaliero il dettaglio più vecchio di `storage.keep_detail_days`
+(30 per default) e poi lo cancella.
+
+I totali di costo e risparmio **non cambiano di un centesimo** — vengono
+sommati prima di cancellare, e `stats` legge da entrambe le tabelle. Cancellare
+e basta avrebbe fatto calare i totali storici a ogni pulizia: il gateway
+avrebbe dimenticato di aver risparmiato. Spariscono invece latenza, note e
+attribuzione per stadio dei giorni compattati, che sono le domande a cui,
+passati quei giorni, il gateway non sa più rispondere.
+
+Le pagine di osservazione guardano le ultime `storage.observability_window`
+richieste (2.000), non tutto il registro, e lo dichiarano: leggevano ventimila
+righe ogni cinque secondi tenendo il lock del database, cioè rallentavano le
+richieste vere.
+
+### Lo streaming risparmia quanto il resto
+
+```bash
+ecotokens streaming
+```
+
+Il corpus non conteneva **nemmeno una** richiesta in streaming su cinquantuno,
+perché quel percorso vive nella rotta HTTP e non in `Gateway.complete`, che è
+la strada del banco: era irraggiungibile per costruzione, e il risparmio
+pubblicato descriveva metà del traffico reale. Misurato: 63.335 contro 63.367
+token di prompt, letture da cache identiche, **0,12%** di scarto sul costo.
+
 ## Vedere quanto si risparmia
 
 Con il gateway acceso, la console dal vivo sta sulla radice:

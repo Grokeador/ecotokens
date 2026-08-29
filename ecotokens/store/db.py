@@ -117,6 +117,31 @@ CREATE TABLE IF NOT EXISTS token_estimates (
 );
 CREATE INDEX IF NOT EXISTS idx_token_estimates_model ON token_estimates(model);
 
+-- Riepilogo per giorno dei consumi il cui dettaglio e' stato cancellato.
+--
+-- `usage_events` ha una riga per richiesta, con note e attribuzione per
+-- stadio: su un servizio con qualche migliaio di richieste al giorno cresce
+-- senza limite, e le pagine che lo leggono rallentano con lui. Il dettaglio
+-- serve per qualche giorno - "cosa e' successo stamattina" - i totali per
+-- sempre. Da qui due tabelle invece di una politica di cancellazione: buttare
+-- e basta renderebbe falsi i totali storici, che e' il difetto del metro che
+-- questo progetto passa il tempo a correggere.
+CREATE TABLE IF NOT EXISTS usage_daily (
+    day                     TEXT NOT NULL,
+    model                   TEXT NOT NULL,
+    source                  TEXT NOT NULL,
+    requests                INTEGER NOT NULL DEFAULT 0,
+    input_tokens            INTEGER NOT NULL DEFAULT 0,
+    output_tokens           INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens   INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens       INTEGER NOT NULL DEFAULT 0,
+    cost_usd                REAL NOT NULL DEFAULT 0,
+    baseline_cost_usd       REAL NOT NULL DEFAULT 0,
+    saved_usd               REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, model, source)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_daily_day ON usage_daily(day);
+
 CREATE TABLE IF NOT EXISTS bench_runs (
     id          TEXT PRIMARY KEY,
     created_at  REAL NOT NULL,
@@ -322,17 +347,37 @@ class Database:
             self.conn.commit()
 
     # -- API asincrona ----------------------------------------------------
+    #
+    # Le operazioni del percorso caldo girano **sul loop**, non su un thread.
+    # Misurato: una `SELECT 1` costa 6,9 us dentro SQLite e 448 attraverso
+    # `asyncio.to_thread` - il trasporto vale 65 volte il lavoro. Con otto
+    # operazioni per richiesta erano 3,5 ms di soli salti fra thread su 15,8
+    # totali, e toglierli porta il gateway da 63 a 94 richieste al secondo.
+    #
+    # Bloccare il loop per qualche microsecondo non e' un problema: e' meno di
+    # quanto costi lo scheduling che si voleva evitare. Lo diventa per le query
+    # di osservazione, che leggono migliaia di righe e arrivano a decine di
+    # millisecondi: quelle passano da `pesante=True` e restano su un thread,
+    # cosi' non fermano le richieste vere mentre la console si aggiorna.
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> int:
         """Esegue una scrittura e restituisce il lastrowid."""
-        cursor = await asyncio.to_thread(self._execute, sql, params)
+        cursor = self._execute(sql, params)
         return int(cursor.lastrowid or 0)
 
     async def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
-        await asyncio.to_thread(self._executemany, sql, list(rows))
+        self._executemany(sql, list(rows))
 
-    async def query(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
-        return await asyncio.to_thread(self._query, sql, params)
+    async def query(
+        self, sql: str, params: Sequence[Any] = (), *, pesante: bool = False
+    ) -> list[sqlite3.Row]:
+        if pesante:
+            return await asyncio.to_thread(self._query, sql, params)
+        return self._query(sql, params)
 
-    async def query_one(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Row | None:
-        return await asyncio.to_thread(self._query_one, sql, params)
+    async def query_one(
+        self, sql: str, params: Sequence[Any] = (), *, pesante: bool = False
+    ) -> sqlite3.Row | None:
+        if pesante:
+            return await asyncio.to_thread(self._query_one, sql, params)
+        return self._query_one(sql, params)

@@ -785,5 +785,119 @@ TUNING_LOG: list[TuningEntry] = [
             "il modo piu' rapido di convincersi di una cosa falsa."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Il trasporto verso il database valeva 65 volte il lavoro",
+        finding=(
+            "Ogni richiesta tocca il database otto volte, e ogni operazione passava "
+            "da `asyncio.to_thread`. Misurato: una `SELECT 1` costa **6,9 us** dentro "
+            "SQLite e **448** attraverso il wrapper. Il salto fra thread esiste per non "
+            "bloccare il loop, ma su un database locale la query e' piu' corta dello "
+            "scheduling che si voleva evitare: erano 3,5 ms di solo trasporto su 15,8 "
+            "totali per richiesta."
+        ),
+        effect=(
+            "Il percorso caldo gira ora sul loop; restano su un thread solo le sette "
+            "letture delle pagine di osservazione, che leggono migliaia di righe e "
+            "fermerebbero tutto mentre la console si aggiorna. Da **63 a 96 richieste "
+            "al secondo**, cioe' il 52% in piu' di traffico dallo stesso codice. Il "
+            "numero e' quello del solo gateway, con l'upstream istantaneo: in "
+            "produzione l'attesa dell'API lo nasconde, finche' il carico non cresce "
+            "abbastanza da farlo emergere. Nessuno l'aveva mai misurato, e il README "
+            "punta ora esplicitamente al caso multiutente."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Due volte in un'ora ho confrontato una serie fredda con una calda",
+        finding=(
+            "Misurando la concorrenza, dodici richieste in parallelo risultavano piu' "
+            "lente di dodici in fila: la serie parallela girava per prima e pagava "
+            "l'avvio. Scaldando entrambe, i due tempi sono identici - il gateway "
+            "serializza, che e' un fatto diverso e piu' utile. Poco dopo, "
+            "`cache_write_report` sembrava impiegare 831 ms su ventimila eventi: erano "
+            "gli import pigri dentro il metodo, pagati alla prima chiamata. Dalla "
+            "seconda erano 58."
+        ),
+        effect=(
+            "Nessuna delle due era una misura sbagliata del gateway: erano due misure "
+            "giuste di qualcos'altro. Il rimedio non e' un accorgimento ma un'abitudine, "
+            "ed e' entrata nei test - ogni prova di velocita' scalda prima, e quelle "
+            "sull'import girano in un processo nuovo, perche' nello stesso interprete il "
+            "secondo import e' gratis ed e' esattamente cosi' che una regressione del "
+            "genere resta invisibile. Vale anche per il costo di una sessione di lavoro: "
+            "il primo giro di qualunque cosa non e' rappresentativo del secondo."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Le pagine che osservano erano il carico piu' pesante",
+        finding=(
+            "`stage_activity` e `cache_write_report` leggevano ventimila righe - in "
+            "pratica tutto il registro - e la console le chiama entrambe ogni cinque "
+            "secondi, tenendo il lock del database mentre lo fa. Il registro, dal canto "
+            "suo, non veniva mai cancellato: `purge` toccava solo le cache, quindi "
+            "cresceva senza limite e le pagine rallentavano con lui. Lo strumento di "
+            "osservazione stava diventando la cosa da osservare."
+        ),
+        effect=(
+            "Finestra di duemila richieste per le pagine - la loro domanda e' *cosa sta "
+            "succedendo adesso*, non *da sempre* - e dichiarata in pagina, perche' un "
+            "conteggio su un sottoinsieme presentato come totale sarebbe il solito "
+            "numero plausibile e sbagliato. `cache_write_report` ordinava inoltre per "
+            "sessione prima di applicare il limite, quindi doveva ordinare l'intera "
+            "tabella: adesso taglia per chiave primaria e ordina dopo. "
+            "Per la crescita, due tabelle invece di una politica di cancellazione: il "
+            "dettaglio recente e un riepilogo giornaliero. Cancellare e basta avrebbe "
+            "fatto **calare i totali storici** a ogni pulizia - il gateway avrebbe "
+            "dimenticato di aver risparmiato, cioe' il difetto del metro introdotto di "
+            "proposito. `stats` legge da entrambe, e un test verifica che compattare non "
+            "sposti i totali di un centesimo."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Lo streaming non era mai stato misurato, ed e' meta' del traffico",
+        finding=(
+            "Zero richieste su cinquantuno del corpus avevano `stream: true`. Non per "
+            "distrazione: il percorso in streaming vive nella rotta HTTP e non in "
+            "`Gateway.complete`, che e' la strada che il banco percorre - quindi era "
+            "irraggiungibile per costruzione. Il risparmio pubblicato descriveva la "
+            "meta' del traffico reale, visto che la maggior parte delle interfacce di "
+            "chat trasmette."
+        ),
+        effect=(
+            "Nuovo `ecotokens streaming`, che passa dall'app vera e serve lo stesso "
+            "carico nei due modi. I due percorsi coincidono: 63.335 contro 63.367 token "
+            "di prompt, letture da cache identiche, **0,12%** di scarto sul costo. La "
+            "misura resta fuori dal corpus di proposito - aggiungere uno scenario "
+            "cambierebbe il denominatore di tutte le percentuali storiche, e la domanda "
+            "e' un'altra: non quanto vale uno stadio, ma se il risultato cambia quando "
+            "la risposta arriva a pezzi. Un esito rassicurante non toglie che fosse "
+            "ignoto."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Il riconoscimento di sessione andava contato, non ottimizzato",
+        finding=(
+            "Sembrava il costo principale per richiesta - spegnendolo il gateway andava "
+            "il 30% piu' veloce - e il piano era renderlo piu' economico, a partire "
+            "dalla cronologia che veniva cancellata e riscritta per intero a ogni turno. "
+            "La regola del progetto dice pero' di contare prima: su quattro carichi lo "
+            "stadio interviene 7 volte su 8, 6 su 7, 8 su 12, 15 su 16. Non e' un caso "
+            "come l'effort adattivo, che veniva raffinato mentre un veto lo spegneva."
+        ),
+        effect=(
+            "Spegnerlo costa: sul carico di costruzione il **13,7% in piu'**, perche' "
+            "senza sessione non c'e' riassunto da riusare. E la riscrittura della "
+            "cronologia impiega 1,8 ms a due righe e 2,7 a ottanta: non cresce con la "
+            "conversazione, quindi il costo sono i due round-trip e non le righe - "
+            "l'ottimizzazione che si stava per fare non era dove stava la spesa. Il "
+            "vero costo era il trasporto verso il database, comune a tutti gli stadi. "
+            "Contare prima ha evitato di ottimizzare la cosa sbagliata **e** di spegnere "
+            "una funzione che si ripaga."
+        ),
+    ),
 
 ]

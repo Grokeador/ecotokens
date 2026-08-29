@@ -412,6 +412,30 @@ class StorageSettings(BaseModel):
     # contenuto delle conversazioni: le statistiche continuano a funzionare.
     store_message_content: bool = True
 
+    # Quante richieste recenti guardano le pagine di osservazione.
+    #
+    # Era 20.000, cioe' in pratica "tutte". Misurato su un registro di ventimila
+    # eventi: `stage_activity` impiegava **994 ms** e `cache_write_report` 831,
+    # e la console le chiama entrambe ogni cinque secondi. La pagina che osserva
+    # diventava il carico piu' pesante del gateway, e teneva il lock del
+    # database mentre lo faceva - cioe' rallentava le richieste vere.
+    #
+    # Duemila risponde alla domanda che quelle pagine fanno davvero: *cosa sta
+    # succedendo adesso*. Il totale storico resta in `stats()`, che aggrega in
+    # SQL e non porta le righe in Python. La finestra e' scritta in pagina: un
+    # conteggio su un sottoinsieme che si presenta come totale sarebbe il
+    # solito numero plausibile e sbagliato.
+    observability_window: int = 2_000
+
+    # Giorni di dettaglio conservati in `usage_events`. Oltre, le righe vengono
+    # aggregate per giorno e cancellate: `ecotokens purge` lo fa.
+    #
+    # Senza, il registro cresce senza limite - una riga per richiesta, con note
+    # e attribuzione per stadio, per sempre. Su un servizio con qualche migliaio
+    # di richieste al giorno diventa il collo di bottiglia, e i totali storici
+    # non richiedono il dettaglio: richiedono i totali.
+    keep_detail_days: int = 30
+
 
 PROFILI = ("prudente", "aggressivo")
 

@@ -93,6 +93,9 @@ Protocollo, quando si trova qualcosa:
 
 ## Trappole già calpestate — non ricalpestarle
 
+- **Il primo giro non è rappresentativo del secondo.** Due volte in un'ora ho
+  confrontato una serie fredda con una calda e concluso il contrario del vero.
+  Scaldare prima di misurare; per gli import, un processo nuovo.
 - **Gli heredoc di Git Bash mangiano i backslash.** Per file con `
 ` dentro le
   stringhe usare Write o Edit, non `cat <<'EOF'`. È la trappola che scatta più
@@ -112,7 +115,7 @@ Il dettaglio di ciascuna sta nel README, sezione «Trappole».
 
 `serve` `stats` `purge` · misure: `bench` `ablate` `optimize` `compaction`
 `prompt` `substitutions` `cachekey` `overhead` `pruning` `ritenzione` `memoria`
-`ceiling` `cachewrites` · pagine: `quadro` (compatta) `dashboard` (estesa)
+`ceiling` `cachewrites` `streaming` · pagine: `quadro` `dashboard`
 
 Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
 devono mai richiedere rete.

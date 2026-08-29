@@ -38,6 +38,14 @@ from .pipeline.base import SOURCE_API
 from .simulator import create_stub
 from .store.db import Database
 from .store.repos import Store
+from .varianti import (
+    BASELINE_VARIANT,
+    FULL_VARIANT,
+    NOMI_ABLAZIONE,
+    RIFERIMENTO_MODERNO,
+    ULTIMO_GRADINO,
+    ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA,
+)
 from .workloads import Scenario, all_scenarios, corpus_fingerprint
 
 
@@ -135,9 +143,6 @@ class BenchRun:
 # sezione dei progressi deve poterlo sapere invece di sommare mele e pere.
 CORPUS_VERSION = "v2"
 
-BASELINE_VARIANT = "senza-gateway"
-FULL_VARIANT = "con-gateway"
-
 
 def _spegni_tutto(settings: Settings) -> None:
     settings.cache_planner.enabled = False
@@ -232,29 +237,23 @@ def _abilita_modello_economico(settings: Settings) -> None:
 
 # Gradini cumulativi dell'ablazione: la differenza fra due gradini consecutivi
 # e' il contributo dello stadio appena acceso.
-# Il gradino che rappresenta "l'applicazione che si sarebbe scritta comunque":
-# un `cache_control` in cima alla richiesta, che Anthropic offre a chiunque. E'
-# il riferimento onesto per la domanda che si fa chi valuta se installare il
-# gateway - non "quanto risparmio contro nessuna cache", che nel frattempo e'
-# diventata una domanda senza destinatari.
-RIFERIMENTO_MODERNO = "+ caching automatico"
-
-# L'ultimo gradino che non tocca il contenuto delle risposte. Dichiarato qui e
-# non dedotto dalla posizione: la scala cambia, e un indice numerico si
-# scollerebbe in silenzio dal significato.
-ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA = "+ riscrittura prompt"
+# I nomi vengono da `varianti`, che non importa niente: qui si accoppiano alle
+# funzioni che li realizzano. Cosi' non esistono due elenchi che possano
+# divergere - e il quadro puo' leggere i nomi senza tirarsi dietro l'SDK.
+_REALIZZA: dict[str, Callable[[Settings], None] | None] = {
+    BASELINE_VARIANT: None,
+    RIFERIMENTO_MODERNO: _abilita_cache_automatica,
+    "+ pianificatore EcoTokens": _abilita_cache_planner,
+    "+ potatura contesto": _abilita_contesto,
+    "+ cache esatta": _abilita_cache_esatta,
+    "+ effort adattivo": _abilita_router,
+    ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA: _abilita_prompt,
+    "+ effort sempre basso": _abilita_effort_minimo,
+    ULTIMO_GRADINO: _abilita_modello_economico,
+}
 
 ABLATION_STEPS: list[tuple[str, Callable[[Settings], None] | None]] = [
-    (BASELINE_VARIANT, None),
-    # Il gradino che il resto della scala deve scavalcare per contare qualcosa.
-    ("+ caching automatico", _abilita_cache_automatica),
-    ("+ pianificatore EcoTokens", _abilita_cache_planner),
-    ("+ potatura contesto", _abilita_contesto),
-    ("+ cache esatta", _abilita_cache_esatta),
-    ("+ effort adattivo", _abilita_router),
-    ("+ riscrittura prompt", _abilita_prompt),
-    ("+ effort sempre basso", _abilita_effort_minimo),
-    ("+ modello economico", _abilita_modello_economico),
+    (nome, _REALIZZA[nome]) for nome in NOMI_ABLAZIONE
 ]
 
 
@@ -517,17 +516,8 @@ async def save_run(store: Store, run: BenchRun, *, corpus: str = "", notes: str 
 
 
 async def load_runs(store: Store, limit: int = 20) -> list[dict[str, Any]]:
-    """Storico delle misure, dalla piu' recente."""
-    righe = await store.db.query(
-        "SELECT * FROM bench_runs ORDER BY created_at DESC LIMIT ?", (limit,)
-    )
-    storico: list[dict[str, Any]] = []
-    for riga in righe:
-        risultati = await store.db.query(
-            "SELECT * FROM bench_results WHERE run_id = ?", (riga["id"],)
-        )
-        storico.append({**dict(riga), "results": [dict(r) for r in risultati]})
-    return storico
+    """Storico delle misure. La lettura vive nel deposito; qui resta il nome."""
+    return await store.load_runs(limit)
 
 
 def run_to_dict(run: BenchRun) -> dict[str, Any]:
@@ -1291,3 +1281,77 @@ def gateway_overhead() -> dict[str, Any]:
             for voce in CATALOG
         ],
     }
+
+
+# --- streaming ------------------------------------------------------------
+
+
+@dataclass
+class EsitoStreaming:
+    modalita: str
+    requests: int = 0
+    prompt_tokens: int = 0
+    cache_read_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+async def measure_streaming(scenario_name: str = "chat") -> list[EsitoStreaming]:
+    """Lo stesso carico servito in un colpo solo e a pezzi.
+
+    Il banco esegue tutto attraverso ``Gateway.complete``, che e' il percorso
+    non-streaming: il percorso in streaming vive nella rotta HTTP e non e' mai
+    stato misurato - zero richieste su cinquantuno del corpus. Non e' una svista
+    da poco, perche' la maggior parte delle interfacce di chat trasmette, e
+    quindi il risparmio pubblicato descriveva la meta' del traffico reale.
+
+    Questa misura passa dall'app vera, l'unico modo di toccare quel percorso.
+    Resta fuori dal corpus di proposito: aggiungere uno scenario cambierebbe il
+    denominatore di tutte le percentuali storiche, e la domanda qui e' diversa
+    da quella dell'ablazione - non "quanto vale uno stadio" ma "il risultato
+    cambia se la risposta arriva a pezzi".
+    """
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from .server import create_app
+
+    esiti: list[EsitoStreaming] = []
+    for modalita in ("in un colpo", "a pezzi"):
+        settings = make_settings(_abilita_prompt)
+        settings.storage.path = ":memory:"
+        app = create_app(settings)
+        gateway = app.state.gateway
+        stub_app, _ = create_stub()
+        gateway.client = anthropic.AsyncAnthropic(
+            api_key="bench",
+            base_url="http://simulatore",
+            http_client=anthropic.DefaultAsyncHttpxClient(
+                transport=httpx2.ASGITransport(app=stub_app)
+            ),
+        )
+
+        scenario = next(
+            s for s in all_scenarios(Path.cwd()) if s.name == scenario_name
+        )
+        esito = EsitoStreaming(modalita=modalita)
+        with TestClient(app) as client:
+            for payload in scenario.requests:
+                corpo = dict(payload)
+                corpo["stream"] = modalita == "a pezzi"
+                if corpo["stream"]:
+                    # Senza, l'usage non arriva al client - ma il gateway lo
+                    # registra comunque, ed e' quello che si sta misurando.
+                    corpo["stream_options"] = {"include_usage": True}
+                risposta = client.post("/v1/chat/completions", json=corpo)
+                assert risposta.status_code == 200, risposta.text
+                if corpo["stream"]:
+                    assert "[DONE]" in risposta.text, "flusso incompleto"
+
+            dati = await gateway.store.stats()
+            esito.requests = int(dati.get("requests") or 0)
+            esito.prompt_tokens = int(dati.get("total_prompt_tokens") or 0)
+            esito.cache_read_tokens = int(dati.get("cache_read_tokens") or 0)
+            esito.cost_usd = float(dati.get("cost_usd") or 0)
+        esiti.append(esito)
+    return esiti

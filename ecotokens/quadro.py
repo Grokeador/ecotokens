@@ -31,6 +31,14 @@ from typing import Any
 
 from . import __version__
 from .config import Settings
+from .varianti import (
+    BASELINE_VARIANT,
+    FULL_VARIANT,
+    NOMI_ABLAZIONE,
+    RIFERIMENTO_MODERNO,
+    ULTIMO_GRADINO,
+    ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA,
+)
 from .store.db import Database
 from .store.repos import Store
 
@@ -39,16 +47,7 @@ from .store.repos import Store
 
 async def build_quadro_data(settings: Settings, store: Store) -> dict[str, Any]:
     """Solo letture. Nessuna misura viene eseguita da questa pagina."""
-    from .bench import (
-        BASELINE_VARIANT,
-        FULL_VARIANT,
-        RIFERIMENTO_MODERNO,
-        ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA,
-        ABLATION_STEPS,
-        load_runs,
-    )
-
-    corse = await load_runs(store, limit=60)
+    corse = await store.load_runs(limit=60)
     confronto = _ultima(corse, "confronto")
     ablazione = _ultima(corse, "ablazione")
 
@@ -56,10 +55,10 @@ async def build_quadro_data(settings: Settings, store: Store) -> dict[str, Any]:
         "generated_at": time.time(),
         "profilo": settings.profilo,
         "confronto": _riassumi_confronto(confronto, BASELINE_VARIANT, FULL_VARIANT),
-        "stadi": _riassumi_ablazione(ablazione, ABLATION_STEPS, BASELINE_VARIANT),
+        "stadi": _riassumi_ablazione(ablazione, NOMI_ABLAZIONE, BASELINE_VARIANT),
         "vs_automatico": _riassumi_vs_automatico(
             ablazione, RIFERIMENTO_MODERNO, ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA,
-            ABLATION_STEPS[-1][0],
+            ULTIMO_GRADINO,
         ),
         "ritenzione": await store.latest_retention(),
         "scritture": await store.cache_write_report(),
@@ -118,13 +117,13 @@ def _riassumi_confronto(corsa, baseline: str, completo: str) -> dict[str, Any]:
     }
 
 
-def _riassumi_ablazione(corsa, passi, baseline: str) -> dict[str, Any]:
+def _riassumi_ablazione(corsa, nomi, baseline: str) -> dict[str, Any]:
     costi = _costi(corsa)
     riferimento = costi.get(baseline)
     if not riferimento:
         return {}
     voci, precedente = [], riferimento
-    for nome, _ in passi[1:]:
+    for nome in nomi[1:]:
         if nome not in costi:
             break
         corrente = costi[nome]
@@ -158,8 +157,6 @@ def ricostruisci_vs_automatico(corse: list[dict[str, Any]]) -> dict[str, Any]:
     pagina servita dal gateway mostra lo stesso pannello di quella generata a
     mano, invece di ometterlo perche' nessuno ha ripetuto la misura.
     """
-    from .bench import RIFERIMENTO_MODERNO, ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA, ABLATION_STEPS
-
     corsa = _ultima(corse, "ablazione")
     if not corsa:
         return {}
@@ -171,7 +168,7 @@ def ricostruisci_vs_automatico(corse: list[dict[str, Any]]) -> dict[str, Any]:
     costi = _costi(corsa)
     base = costi.get(RIFERIMENTO_MODERNO)
     prudente = costi.get(ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA)
-    completo = costi.get(ABLATION_STEPS[-1][0])
+    completo = costi.get(ULTIMO_GRADINO)
     if not base or prudente is None or completo is None:
         return {}
 
