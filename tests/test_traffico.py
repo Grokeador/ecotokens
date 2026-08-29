@@ -165,3 +165,76 @@ async def test_il_gateway_regge_almeno_cinquanta_richieste_al_secondo(richieste)
         await gateway.shutdown()
 
     assert al_secondo > 50, f"{al_secondo:.0f} richieste al secondo"
+
+
+@pytest.mark.skipif(
+    _sotto_strumentazione(), reason="conta oggetti: la strumentazione ne aggiunge di suoi"
+)
+async def test_il_gateway_non_accumula_oggetti_richiesta_dopo_richiesta():
+    """Un gateway resta acceso per settimane, e sei oggetti per richiesta sono
+    pochi per richiesta e molti per un anno: a mille al giorno fanno due
+    milioni.
+
+    La prima misura diceva **+6,05 oggetti per richiesta**, e non era il
+    gateway: era lo stub, che conserva ogni payload ricevuto per permettere ai
+    test di guardarlo. Svuotando quella lista la crescita sparisce. E' la
+    quarta volta in una giornata che un difetto apparente sta nello strumento
+    invece che nel prodotto, ed e' il motivo per cui questo test esiste al
+    posto della convinzione che vada bene.
+    """
+    import gc
+
+    import anthropic
+    import httpx2
+
+    from ecotokens.api.schemas import ChatCompletionRequest
+    from ecotokens.bench import _abilita_prompt, make_settings
+    from ecotokens.server import Gateway
+    from ecotokens.simulator import create_stub
+
+    settings = make_settings(_abilita_prompt)
+    settings.storage.path = ":memory:"
+    gateway = Gateway(settings)
+    stub_app, stato = create_stub()
+    gateway.client = anthropic.AsyncAnthropic(
+        api_key="prova",
+        base_url="http://simulatore",
+        http_client=anthropic.DefaultAsyncHttpxClient(
+            transport=httpx2.ASGITransport(app=stub_app)
+        ),
+    )
+    await gateway.startup()
+
+    def richiesta(indice: int) -> ChatCompletionRequest:
+        return ChatCompletionRequest.model_validate(
+            {
+                "model": "claude-opus-5",
+                "max_tokens": 200,
+                "messages": [
+                    {"role": "system", "content": "Assistente. " * 150},
+                    {"role": "user", "content": f"domanda {indice}"},
+                ],
+            }
+        )
+
+    async def giro(quante: int) -> None:
+        for indice in range(quante):
+            await gateway.complete(richiesta(indice))
+            # Il registro del simulatore e' memoria sua, non del gateway.
+            stato.requests.clear()
+
+    try:
+        await giro(150)  # a caldo: import, schemi, connessioni
+        gc.collect()
+        prima = len(gc.get_objects())
+        await giro(400)
+        gc.collect()
+        dopo = len(gc.get_objects())
+    finally:
+        await gateway.shutdown()
+
+    per_richiesta = (dopo - prima) / 400
+    # Il registro in memoria cresce davvero - e' dato, non perdita - quindi la
+    # soglia non e' zero. Ma deve restare molto sotto l'ordine di grandezza che
+    # segnalerebbe un accumulo strutturale.
+    assert per_richiesta < 2.0, f"{per_richiesta:+.2f} oggetti per richiesta"
