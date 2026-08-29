@@ -289,3 +289,32 @@ async def test_le_righe_vecchie_non_falsano_il_merito(client):
     dati = client.get("/admin/live").json()["totals"]
     assert dati["richieste_confrontabili"] == 1, "la riga vecchia non va confrontata"
     assert -1.0 < dati["quota_gateway_ratio"] < 1.0
+
+
+async def test_la_memoria_dei_prefissi_non_cresce_senza_fine(client):
+    """Un dizionario che cresce in un processo che gira per settimane e' una
+    perdita di memoria, e l'ho introdotta io scrivendo la correzione.
+
+    La potatura e' pigra apposta: costa qualcosa solo quando serve, e non
+    aggiunge lavoro alla richiesta normale.
+    """
+    store = client.gateway.store
+    limite = store._MAX_PREFISSI
+
+    for indice in range(limite * 2 + 100):
+        store.prefisso_gia_visto(f"impronta-{indice}")
+
+    assert len(store._prefissi_visti) <= limite * 2
+    # E continua a rispondere giusto su quelli recenti.
+    assert store.prefisso_gia_visto("impronta-appena-vista") is False
+    assert store.prefisso_gia_visto("impronta-appena-vista") is True
+
+
+async def test_un_prefisso_visto_molto_tempo_fa_torna_freddo(client):
+    """La cache di Anthropic dura cinque minuti: oltre, il concorrente
+    ripartirebbe da zero come noi."""
+    store = client.gateway.store
+    store.prefisso_gia_visto("vecchio")
+    store._prefissi_visti["vecchio"] -= store._FINESTRA_PREFISSI + 1
+
+    assert store.prefisso_gia_visto("vecchio") is False

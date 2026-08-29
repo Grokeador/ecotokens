@@ -105,8 +105,14 @@ async def test_una_query_pesante_resta_su_un_thread():
 async def test_il_gateway_regge_almeno_cinquanta_richieste_al_secondo(richieste):
     """Un limite generoso: serve a cogliere un crollo, non una fluttuazione.
 
-    Misurato a 96 al secondo dopo aver tolto i salti fra thread, 63 prima. La
-    soglia sta molto sotto per non diventare un test che fallisce quando la
+    Misurato a 96 al secondo dopo aver tolto i salti fra thread, 63 prima, e 93
+    dopo le aggiunte al percorso caldo - salvataggio dei parametri per stadio,
+    memoria dei prefissi, query del tasso di continuazione. La differenza fra
+    93 e 96 sta dentro il rumore dello strumento, che su questa macchina e' di
+    circa il 3%, e l'A/B sulla sola query adattiva l'ha data addirittura di
+    segno opposto: e' rumore, non un guadagno.
+
+    La soglia sta molto sotto per non diventare un test che fallisce quando la
     macchina e' occupata - cio' che deve cogliere e' il ritorno a un ordine di
     grandezza diverso.
     """
