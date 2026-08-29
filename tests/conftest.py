@@ -13,6 +13,25 @@ from ecotokens.server import create_app
 from ecotokens.simulator import StubState, create_stub
 
 
+def sotto_strumentazione() -> bool:
+    """Vero se coverage sta contando le righe mentre il test gira.
+
+    Un test che misura il tempo, eseguito sotto lo strumento, misura anche lo
+    strumento: la copertura moltiplica i tempi per tre o quattro. Le due
+    risposte oneste sono saltare il test - quando cio' che misura e' cosi'
+    fine che sotto traccia non significa piu' niente - oppure allargare il
+    limite in proporzione, quando la proprieta' difesa e' grossolana abbastanza
+    da restare difendibile. Quello che non va fatto e' abbassare la soglia
+    finche' passa: la renderebbe incapace di cogliere una regressione vera.
+
+    Sta qui e non in un file di test perche' serve a due file, e due
+    definizioni di "siamo sotto strumentazione" possono divergere.
+    """
+    import sys
+
+    return "coverage" in sys.modules and sys.gettrace() is not None
+
+
 @pytest.fixture
 def settings() -> Settings:
     """Configurazione di test: database in memoria, stadi rumorosi spenti.

@@ -20,18 +20,7 @@ import pytest
 from ecotokens.store.db import Database
 
 
-def _sotto_strumentazione() -> bool:
-    """Vero se coverage sta contando le righe mentre il test gira.
-
-    Un test di velocita' eseguito sotto lo strumento misura anche lo strumento:
-    la copertura moltiplica i tempi per tre o quattro, e il test fallisce
-    dicendo una cosa falsa sul gateway. Saltarlo la' e' l'unica risposta
-    onesta - abbassare la soglia fino a farlo passare lo renderebbe incapace
-    di cogliere una regressione vera.
-    """
-    import sys
-
-    return "coverage" in sys.modules and sys.gettrace() is not None
+from .conftest import sotto_strumentazione as _sotto_strumentazione
 
 
 # --- il trasporto verso il database ---------------------------------------
