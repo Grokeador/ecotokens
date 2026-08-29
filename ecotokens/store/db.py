@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS usage_daily (
     cache_read_tokens       INTEGER NOT NULL DEFAULT 0,
     cost_usd                REAL NOT NULL DEFAULT 0,
     baseline_cost_usd       REAL NOT NULL DEFAULT 0,
+    baseline_ingenua_usd    REAL NOT NULL DEFAULT 0,
     saved_usd               REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (day, model, source)
 );
@@ -264,6 +265,13 @@ COLONNE_AGGIUNTE: list[tuple[str, str, str]] = [
     ("usage_events", "overhead_tokens", "INTEGER NOT NULL DEFAULT 0"),
     ("usage_events", "aux_cost_usd", "REAL NOT NULL DEFAULT 0"),
     ("usage_events", "client_format", "TEXT NOT NULL DEFAULT ''"),
+    # La baseline che conta davvero: cosa avrebbe pagato un client senza
+    # gateway ma non ingenuo, cioe' uno che si mette da solo un `cache_control`
+    # in cima al system prompt. Il default zero va letto come "non registrata":
+    # le righe scritte prima di questa colonna non possono saperlo, e riempirle
+    # con la baseline a prezzo pieno le farebbe sembrare misurate.
+    ("usage_events", "baseline_ingenua_usd", "REAL NOT NULL DEFAULT 0"),
+    ("usage_daily", "baseline_ingenua_usd", "REAL NOT NULL DEFAULT 0"),
 ]
 
 

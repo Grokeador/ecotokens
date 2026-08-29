@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..pricing import Usage, baseline_cost_usd, cost_usd
+from ..pricing import Usage, baseline_cost_usd, baseline_ingenua_usd, cost_usd
 from .base import SOURCE_API, BaseStage, RequestContext
 
 logger = logging.getLogger("ecotokens.ledger")
@@ -53,6 +53,40 @@ class LedgerStage(BaseStage):
             # si prezza la lunghezza osservata alla tariffa dell'altro. E' la
             # sola approssimazione del conto, ed e' dichiarata in pagina.
             baseline = baseline_cost_usd(ctx.requested_model, usage)
+            # E accanto, il confronto onesto: non contro chi non usa la cache -
+            # nessuno, oggi - ma contro chi se la mette da solo. La differenza
+            # fra le due baseline e' precisamente lo sconto che Anthropic fa a
+            # chiunque, e che non appartiene a questo gateway.
+            #
+            # Il concorrente e' freddo quando lo eravamo noi. Non e' una
+            # cortesia: e' l'unico modo di non ripetere la trappola che questo
+            # progetto ha gia' calpestato due volte, cioe' confrontare una
+            # serie fredda con una calda e concludere il contrario del vero.
+            #
+            # Assumendolo sempre caldo, una prima richiesta ci vedeva pagare
+            # una scrittura a 1,25x contro una sua lettura a 0,1x, e il gateway
+            # risultava dannoso su ogni sessione nuova. Assumendolo sempre
+            # freddo, in un servizio dove molte sessioni condividono lo stesso
+            # system prompt gli si addebiterebbe una scrittura che non fa - e
+            # sarebbe esattamente il traffico su cui EcoTokens cita il proprio
+            # +19,9%, cioe' il punto in cui gonfiare fa piu' danno.
+            #
+            # La domanda va posta al **traffico**, non a noi. La prima
+            # versione guardava i nostri `cache_read_tokens`: spegnendo il
+            # pianificatore quel numero andava a zero, il concorrente
+            # risultava freddo su ogni richiesta e il merito del gateway
+            # saltava di 13,8 punti. Bastava smettere di ottimizzare per
+            # sembrare piu' bravi - circolare, e nella direzione comoda.
+            #
+            # `prefisso_gia_visto` risponde invece se lo stesso `tools` +
+            # `system` e' passato di qui negli ultimi cinque minuti, che e' una
+            # proprieta' del traffico e non della nostra configurazione.
+            ctx.baseline_ingenua_usd = baseline_ingenua_usd(
+                ctx.requested_model,
+                usage,
+                ctx.stable_prefix_tokens,
+                prefisso_freddo=not ctx.store.prefisso_gia_visto(ctx.stable_prefix_hash),
+            )
             # Le chiamate che il gateway ha fatto per conto proprio - il
             # riassunto di compattazione - le paga comunque l'utente: entrano
             # nel conto, altrimenti uno stadio che chiama un modello sembra
@@ -75,6 +109,10 @@ class LedgerStage(BaseStage):
             # lo stadio che ha servito la risposta.
             baseline = ctx.saved_usd
             ctx.cost_usd = 0.0
+            # Un hit della cache esatta e' merito **solo** del gateway: nessun
+            # client senza di esso avrebbe evitato la chiamata. Qui le due
+            # baseline coincidono, ed e' il caso in cui il gateway vale di piu'.
+            ctx.baseline_ingenua_usd = baseline
 
         ctx.attribuisci(self.name, ctx.notes[prima_delle_proprie:])
         await ctx.store.record_usage(
@@ -84,6 +122,7 @@ class LedgerStage(BaseStage):
             usage=ctx.usage,
             cost_usd=ctx.total_cost_usd,
             baseline_cost_usd=baseline,
+            baseline_ingenua_usd=ctx.baseline_ingenua_usd,
             saved_usd=ctx.saved_usd,
             cache_ttl=ctx.cache_ttl,
             latency_ms=ctx.elapsed_ms,

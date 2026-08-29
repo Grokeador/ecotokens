@@ -29,25 +29,33 @@ sessione: se uno strumento fallisce si continua senza, non si molla il compito.
 
 Non teoria: i vincoli che governano il costo di *questa* sessione.
 
-1. **Il prefisso è tutto.** Il caching è un match di prefisso: un byte diverso
-   all'inizio invalida tutto il resto, e vale il 67,8% del risparmio misurato.
-   In sessione: non rileggere file già letti, non rifare la stessa ricerca con
-   altre parole, non cambiare modello a metà. **Ma quel 67,8% non è del
-   gateway**: Anthropic lo dà a chiunque metta un `cache_control` in cima. Il
-   pianificatore ne aggiunge 0,7 — media fra −0,2% su conversazioni singole e
-   +19,9% quando più richieste condividono un prefisso. Conta più il metodo del
-   numero: *un riferimento invecchia*, e finché non lo si aggiorna si misura
-   quanto costava non usare una funzione diventata gratis nel frattempo.
+1. **Il prefisso è tutto, e conta contro chi lo si misura.** Il caching è un
+   match di prefisso: un byte diverso all'inizio invalida tutto il resto. In
+   sessione: non rileggere file già letti, non rifare la stessa ricerca con
+   altre parole, non cambiare modello a metà. Il risparmio del gateway cambia
+   di segno secondo il concorrente scelto, e tenerne uno solo è il modo più
+   facile di dire una cosa vera che inganna:
+   - contro chi **non usa la cache**: 67,8%. Nessuno lo fa: è un fantoccio.
+   - contro la **delega automatica** di Anthropic (`cache_control` in cima
+     alla richiesta): +19,9% a prefisso condiviso, −0,2% su conversazione
+     singola. Il server mette il breakpoint *dopo* la domanda, quindi la voce
+     che crea non serve a nessun'altra domanda.
+   - contro uno sviluppatore che mette il `cache_control` **sul proprio system
+     prompt** — una riga, ed è la pratica documentata: **+21,1%** su una
+     conversazione che cresce, **−4,6%** su molti utenti a turno singolo,
+     **+87,1%** su domande che si ripetono.
+
+   È il terzo che risponde a «conviene installarlo», ed è quello che il
+   registro ora calcola su ogni richiesta.
 2. **Ogni turno rispedisce tutto.** Il costo di un ciclo agentico cresce con il
    *numero di turni*, non solo con la loro dimensione. Chiamate indipendenti
    vanno fatte **nello stesso messaggio**: due Bash in parallelo costano un
    round-trip, in sequenza ne costano due, e il secondo rispedisce il primo. È
    la leva più grossa di una sessione.
-3. **Leggere mirato.** `Read` con `offset`/`limit`, `Grep` con `-A`/`-B`, invece
-   di versare un file intero nel contesto.
+3. **Leggere mirato.** `Read` con `offset`/`limit`, `Grep` con `-A`/`-B`.
 4. **Accorciare il prompt rende un quarto.** Togliere mille token rende
-   ~$0,0014 contro $0,0050 di prezzo pieno, perché la cache li aveva già
-   scontati. Non conviene contorcersi per essere brevi; conviene non rileggere.
+   ~$0,0014 contro $0,0050, perché la cache li aveva già scontati. Non conviene
+   contorcersi per essere brevi; conviene non rileggere.
 5. **Comprimere e mettere in cache tirano in direzioni opposte.** Riscrivere
    ciò che sta all'inizio del contesto costa più di quanto rende, a meno che
    non sia **deterministico e stabile**.
@@ -62,17 +70,14 @@ Non teoria: i vincoli che governano il costo di *questa* sessione.
 
 ## Il circolo fra sessione e prodotto
 
-Va tenuto aperto nelle due direzioni, ed è il motivo per cui questo file esiste.
-**Sessione → EcoTokens**: una pratica utile e automatizzabile diventa uno stadio
-o un default (la normalizzazione prima della chiave di cache è nata così).
-**EcoTokens → sessione**: quando una misura smentisce un'intuizione, la regola
-cambia *anche qui sopra*.
+Va tenuto aperto nelle due direzioni, ed è perché questo file esiste. Una
+pratica di lavoro utile e automatizzabile diventa uno stadio; una misura che
+smentisce un'intuizione cambia la regola *anche qui sopra*.
 
-**Contare prima di progettare.** Prima di raffinare uno stadio, misurare quante
-volte interviene: l'effort adattivo sembrava un'euristica da migliorare, e
-invece un veto lo spegneva sul 45% del traffico. `ecotokens ritenzione` fa la
-domanda gemella — *ciò che serviva è arrivato al prompt?* — e la prima risposta
-è stata **zero fatti su tutti** con la potatura accesa.
+**Contare prima di progettare.** L'effort adattivo sembrava un'euristica da
+migliorare: un veto lo spegneva sul 45% del traffico. `ecotokens ritenzione`
+fa la domanda gemella — *ciò che serviva è arrivato al prompt?* — e la prima
+risposta è stata **zero fatti su tutti** con la potatura accesa.
 
 Protocollo, quando si trova qualcosa:
 
@@ -92,10 +97,8 @@ Protocollo, quando si trova qualcosa:
   escape nelle stringhe usare Write o Edit, non `cat <<'EOF'`. È la trappola
   che scatta più spesso.
 - **`git checkout --` scarta, non mette da parte.** Copiare i file altrove
-  *prima*: cancella il lavoro senza chiedere e senza reflog.
+  *prima*: cancella senza chiedere e senza reflog.
 - **Una rete di sicurezza è codice nuovo**, cioè dove i bug sono più probabili.
-  Quella scritta per proteggere la pipeline conteneva una ricorsione su dati
-  esterni e un contatore che si azzerava da solo.
 - **Un parametro il cui costo scende sempre non è da ottimizzare**
   (`keep_recent_messages`).
 - **Il simulatore è una copia, e una copia più permissiva nasconde.** Conta i

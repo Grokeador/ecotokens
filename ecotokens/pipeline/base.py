@@ -12,6 +12,8 @@ che ha modificato la richiesta e' quindi il primo a poter osservare l'esito.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -112,6 +114,17 @@ class RequestContext:
     cache_ttl: str = "5m"
 
     estimated_prompt_tokens: int = 0
+    # Token di `tools` + `system` **come li ha mandati il client**, prima che
+    # qualunque stadio li tocchi. E' il prefisso che un client senza gateway
+    # metterebbe in cache da solo con un `cache_control`, e serve a prezzare la
+    # baseline realistica: senza, il gateway si prende il merito di uno sconto
+    # che Anthropic fa comunque a chiunque.
+    stable_prefix_tokens: int = 0
+    # Impronta dello stesso prefisso. Serve a sapere se qualcun altro lo ha
+    # gia' fatto passare di qui: e' cosi' che si stabilisce se il concorrente
+    # senza gateway lo avrebbe avuto in cache, senza dedurlo da cio' che
+    # abbiamo deciso noi.
+    stable_prefix_hash: str = ""
     # Token tolti dalla riscrittura del prompt, e quanti di quelli stavano
     # fuori dal prefisso servito da cache. La distinzione conta: un token tolto
     # al prefisso in cache vale un decimo di uno tolto alla coda.
@@ -127,6 +140,10 @@ class RequestContext:
     usage: Usage = field(default_factory=Usage)
     cost_usd: float = 0.0
     saved_usd: float = 0.0
+    # Cosa avrebbe pagato un client senza gateway che usa la cache da se'.
+    # Fra questa e `baseline_cost_usd` sta lo sconto che Anthropic fa a
+    # chiunque; fra questa e `cost_usd` sta quello che aggiunge EcoTokens.
+    baseline_ingenua_usd: float = 0.0
     # Spesa delle chiamate che il gateway fa per conto proprio: riassunti di
     # compattazione, estrazione dei fatti da ricordare. Non compare in
     # `response.usage` perche' non appartiene alla risposta dell'utente, ma
@@ -153,6 +170,24 @@ class RequestContext:
     def __post_init__(self) -> None:
         if not self.requested_model:
             self.requested_model = self.model
+        if not self.stable_prefix_tokens:
+            # Qui, non piu' tardi: fra un istante gli stadi cominciano a
+            # riscrivere, e il prefisso di cui si vuole il peso e' quello che
+            # il client ha scritto, non quello che il gateway ha prodotto.
+            from ..tokens import estimate_content_tokens, estimate_tools_tokens
+
+            self.stable_prefix_tokens = estimate_tools_tokens(
+                self.params.get("tools")
+            ) + estimate_content_tokens(self.params.get("system"))
+            impronta = hashlib.sha256(
+                json.dumps(
+                    [self.params.get("tools"), self.params.get("system")],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    default=str,
+                ).encode("utf-8")
+            )
+            self.stable_prefix_hash = impronta.hexdigest()[:32]
 
     @property
     def session_id(self) -> str | None:

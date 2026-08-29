@@ -65,6 +65,7 @@ class Store:
 
     def __init__(self, db: Database) -> None:
         self.db = db
+        self._prefissi_visti: dict[str, float] = {}
 
     # -- sessioni ---------------------------------------------------------
 
@@ -315,6 +316,64 @@ class Store:
 
     # -- contabilita' ------------------------------------------------------
 
+    # Prefissi stabili visti passare di recente: impronta -> istante.
+    #
+    # Serve a una domanda sola, e delicata: **un client senza gateway avrebbe
+    # avuto questo prefisso gia' in cache?** La risposta non puo' dipendere da
+    # cosa abbiamo deciso noi. La prima versione la ricavava dai nostri
+    # `cache_read_tokens`, e quindi spegnendo il nostro pianificatore il
+    # concorrente risultava freddo su ogni richiesta: bastava smettere di
+    # ottimizzare per sembrare piu' bravi del 13,8%. Circolare, e nella
+    # direzione comoda.
+    #
+    # Qui invece si guarda il **traffico**: se lo stesso `tools` + `system` e'
+    # passato di qui negli ultimi cinque minuti, allora era caldo per chiunque.
+    # E' in memoria e non su disco perche' e' una domanda su una finestra di
+    # cinque minuti; si azzera al riavvio, e per il primo giro di ogni prefisso
+    # sbaglia **contro** il gateway, che e' il verso giusto in cui sbagliare.
+    _FINESTRA_PREFISSI = 300.0
+    _MAX_PREFISSI = 4096
+
+    def prefisso_gia_visto(self, impronta: str) -> bool:
+        """Vero se questo prefisso stabile e' passato negli ultimi 5 minuti."""
+        adesso = _now()
+        visti = self._prefissi_visti
+        precedente = visti.get(impronta)
+        visti[impronta] = adesso
+        if len(visti) > self._MAX_PREFISSI:
+            # Potatura pigra: si buttano quelli fuori finestra, e se non basta
+            # i piu' vecchi. Un dizionario che cresce senza limite in un
+            # processo che gira per settimane e' una perdita di memoria.
+            soglia = adesso - self._FINESTRA_PREFISSI
+            self._prefissi_visti = visti = {
+                k: v for k, v in visti.items() if v >= soglia
+            }
+            if len(visti) > self._MAX_PREFISSI:
+                for chiave in sorted(visti, key=visti.get)[: len(visti) // 2]:
+                    del visti[chiave]
+        return precedente is not None and adesso - precedente <= self._FINESTRA_PREFISSI
+
+    async def tasso_continuazione(self, minimo: int = 20) -> float | None:
+        """Frazione di conversazioni arrivate almeno al secondo turno.
+
+        Risponde alla domanda da cui dipende se convenga marcare la coda di una
+        richiesta appena arrivata: quel marker paga 0,25x in piu' subito e
+        risparmia 0,9x **solo se** un turno successivo lo rilegge.
+
+        `None` finche' non ci sono almeno `minimo` conversazioni: su quattro
+        sessioni la frazione oscilla fra 0 e 1 e deciderebbe a caso. Meglio
+        dire "non lo so" e lasciare il comportamento prudente.
+        """
+        riga = await self.db.query_one(
+            """SELECT COUNT(*) AS totali,
+                      SUM(CASE WHEN turn_count > 1 THEN 1 ELSE 0 END) AS proseguite
+               FROM sessions""",
+            pesante=True,
+        )
+        if not riga or int(riga["totali"] or 0) < minimo:
+            return None
+        return float(riga["proseguite"] or 0) / float(riga["totali"])
+
     async def record_usage(
         self,
         *,
@@ -325,6 +384,7 @@ class Store:
         cost_usd: float,
         baseline_cost_usd: float,
         saved_usd: float,
+        baseline_ingenua_usd: float = 0.0,
         cache_ttl: str = "5m",
         latency_ms: float | None = None,
         notes: list[str] | None = None,
@@ -347,8 +407,9 @@ class Store:
                (session_id, ts, day, month, model, source, input_tokens, output_tokens,
                 cache_creation_tokens, cache_read_tokens, cache_ttl, cost_usd,
                 baseline_cost_usd, saved_usd, latency_ms, notes,
-                stages, overhead_tokens, aux_cost_usd, client_format)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                stages, overhead_tokens, aux_cost_usd, client_format,
+                baseline_ingenua_usd)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id,
                 ts,
@@ -370,6 +431,7 @@ class Store:
                 int(overhead_tokens),
                 float(aux_cost_usd),
                 client_format,
+                float(baseline_ingenua_usd),
             ),
         )
 
@@ -404,12 +466,12 @@ class Store:
     _CONSUMI = """
         SELECT day, model, source, 1 AS requests, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens, cost_usd,
-               baseline_cost_usd, saved_usd
+               baseline_cost_usd, baseline_ingenua_usd, saved_usd
         FROM usage_events
         UNION ALL
         SELECT day, model, source, requests, input_tokens, output_tokens,
                cache_creation_tokens, cache_read_tokens, cost_usd,
-               baseline_cost_usd, saved_usd
+               baseline_cost_usd, baseline_ingenua_usd, saved_usd
         FROM usage_daily
     """
 
@@ -422,6 +484,7 @@ class Store:
                       COALESCE(SUM(cache_read_tokens), 0)    AS cache_read_tokens,
                       COALESCE(SUM(cost_usd), 0)             AS cost_usd,
                       COALESCE(SUM(baseline_cost_usd), 0)    AS baseline_cost_usd,
+                      COALESCE(SUM(baseline_ingenua_usd), 0) AS baseline_ingenua_usd,
                       COALESCE(SUM(saved_usd), 0)            AS saved_usd
                FROM ({self._CONSUMI})""",
             pesante=True,
@@ -877,11 +940,12 @@ class Store:
         await self.db.execute(
             """INSERT INTO usage_daily (day, model, source, requests, input_tokens,
                    output_tokens, cache_creation_tokens, cache_read_tokens,
-                   cost_usd, baseline_cost_usd, saved_usd)
+                   cost_usd, baseline_cost_usd, baseline_ingenua_usd, saved_usd)
                SELECT day, model, source, COUNT(*),
                       SUM(input_tokens), SUM(output_tokens),
                       SUM(cache_creation_tokens), SUM(cache_read_tokens),
-                      SUM(cost_usd), SUM(baseline_cost_usd), SUM(saved_usd)
+                      SUM(cost_usd), SUM(baseline_cost_usd),
+                      SUM(baseline_ingenua_usd), SUM(saved_usd)
                FROM usage_events WHERE day < ?
                GROUP BY day, model, source
                ON CONFLICT(day, model, source) DO UPDATE SET
@@ -892,6 +956,7 @@ class Store:
                    cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
                    cost_usd = cost_usd + excluded.cost_usd,
                    baseline_cost_usd = baseline_cost_usd + excluded.baseline_cost_usd,
+                   baseline_ingenua_usd = baseline_ingenua_usd + excluded.baseline_ingenua_usd,
                    saved_usd = saved_usd + excluded.saved_usd""",
             (confine,),
         )

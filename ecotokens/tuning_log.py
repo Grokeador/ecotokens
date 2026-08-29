@@ -1085,5 +1085,72 @@ TUNING_LOG: list[TuningEntry] = [
             "la pulizia non deve trasformarsi in una perdita di risorse."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Il numero in cima si misurava contro un fantoccio",
+        finding=(
+            "`baseline_cost_usd` prezza la stessa richiesta con tutti i token di "
+            "prompt a tariffa piena, cioe' un client che non usa affatto il prompt "
+            "caching. La console lo etichettava \"Senza gateway: stesso traffico a "
+            "prezzo pieno\" e ne ricavava il risparmio. Ma chiunque integri l'API "
+            "oggi mette un `cache_control` sul proprio system prompt - una riga, ed "
+            "e' la pratica documentata - e ottiene lo sconto sul prefisso stabile "
+            "senza installare niente."
+        ),
+        effect=(
+            "Il gateway si prendeva il merito della meta' piu' grossa del numero. "
+            "Aggiunta una seconda baseline, e la console mostra ora **Merito del "
+            "gateway** in cima e il risparmio totale sotto, con un avviso quando il "
+            "primo scende sotto il 2%. Misurato: +21,1% su una conversazione che "
+            "cresce, -4,6% su molti utenti a turno singolo, +87,1% su domande che "
+            "si ripetono. I numeri gia' pubblicati - +19,9% e -0,2% - non erano "
+            "sbagliati: misuravano un **concorrente diverso**, la delega automatica "
+            "di Anthropic, che mette il breakpoint dopo la domanda. Tenere un solo "
+            "concorrente e' il modo piu' facile di dire una cosa vera che inganna."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="La baseline nuova deduceva lo stato del concorrente dalla nostra politica",
+        finding=(
+            "Per sapere se il concorrente avrebbe avuto il prefisso gia' in cache, "
+            "la prima versione guardava i **nostri** `cache_read_tokens`. Spegnendo "
+            "il pianificatore quel numero va a zero, il concorrente risultava freddo "
+            "su ogni richiesta e gli si addebitava una scrittura a 1,25x: il merito "
+            "del gateway saltava da -5,8% a +8,0%."
+        ),
+        effect=(
+            "Bastava smettere di ottimizzare per sembrare piu' bravi di 13,8 punti. "
+            "Circolare, e nella direzione comoda - la stessa forma della trappola "
+            "caldo/freddo gia' calpestata due volte in questo progetto, alla terza "
+            "occorrenza. Adesso la domanda va posta al traffico: se lo stesso "
+            "`tools` + `system` e' passato di qui negli ultimi cinque minuti, era "
+            "caldo per chiunque. E' una proprieta' di cio' che arriva, non di cio' "
+            "che decidiamo."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="Il breakpoint sulla coda scriveva in cache cio' che nessuno rileggeva",
+        finding=(
+            "Il pianificatore marcava l'ultimo blocco dell'ultimo messaggio a ogni "
+            "richiesta, primo turno compreso. Su traffico a turno singolo - molti "
+            "utenti diversi, stesso system prompt - quel marker scrive una coda "
+            "unica di quella richiesta, che nessuno rileggera' mai: 1,25x invece di "
+            "1x, per niente."
+        ),
+        effect=(
+            "Il pareggio non e' una soglia da scegliere: scrivere costa 0,25x in "
+            "piu', rileggere fa risparmiare 0,9x, quindi marcare conviene se la "
+            "probabilita' che qualcuno rilegga supera 0,25/0,9 = 27,8%. Il gateway "
+            "osserva quella frazione sulle proprie sessioni invece di indovinarla, e "
+            "finche' non ne ha almeno venti marca - cioe' resta com'era. Misurato su "
+            "traffico a turno singolo: +1,6 punti, e le scritture in cache da 25.046 "
+            "token a 3.967. Sulle conversazioni lunghe non cambia niente, perche' li' "
+            "la scommessa la vince sempre. Su traffico misto perde un decimo di "
+            "punto: la frazione e' una sola per tutta l'installazione, e distinguerla "
+            "per prefisso e' il passo successivo - non misurato, quindi non fatto."
+        ),
+    ),
 
 ]

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..pricing import model_info
+from ..pricing import CACHE_READ_MULTIPLIER, CACHE_WRITE_MULTIPLIER, model_info
 from ..tokens import estimate_content_tokens, estimate_tools_tokens
 from .base import BaseStage, RequestContext
 
@@ -112,6 +112,16 @@ class CachePlannerStage(BaseStage):
 
         # 3. Ultimo blocco dell'ultimo messaggio: rende riutilizzabile l'intera
         #    conversazione alla richiesta successiva.
+        #
+        #    "Successiva" e' il punto. Su una conversazione che prosegue questo
+        #    marker e' il piu' redditizio di tutti; su traffico a turno singolo
+        #    - molti utenti diversi, stesso system prompt - scrive in cache una
+        #    coda che nessuno rileggera' mai, e si pagano 1,25x invece di 1x
+        #    per niente. Misurato su quel traffico: il gateway finiva **sotto**
+        #    un client che si limita a marcare il proprio system prompt.
+        if placed < budget and not await self._conviene_marcare_la_coda(ctx):
+            budget = placed  # niente marker finale, il resto resta com'e'
+
         if placed < budget:
             for message in reversed(messages):
                 blocks = _blocks(message)
@@ -123,6 +133,39 @@ class CachePlannerStage(BaseStage):
 
         if placed:
             ctx.note(f"cache TTL {ctx.cache_ttl}, {placed} breakpoint piazzati")
+
+    async def _conviene_marcare_la_coda(self, ctx: RequestContext) -> bool:
+        """Se marcare la coda al primo turno paghi piu' di quanto costa.
+
+        Solo al primo turno: da li' in poi la conversazione ha gia' dimostrato
+        di proseguire, e il marker si ripaga.
+
+        Il pareggio non e' una soglia scelta: scrivere costa 0,25x in piu' di
+        non scrivere, rileggere fa risparmiare 0,9x, quindi conviene se la
+        probabilita' che qualcuno rilegga supera 0,25/0,9. Il gateway la
+        osserva sulle proprie sessioni invece di indovinarla, e finche' non ne
+        ha abbastanza marca - cioe' resta com'era.
+        """
+        if ctx.history_turns > 0 or not self.config.adatta_primo_turno:
+            return True
+
+        # Senza registro non si osserva niente, e "non lo so" deve significare
+        # "fai come prima": la regola esiste per togliere una spesa inutile,
+        # non per introdurne una nuova quando l'osservazione manca.
+        if ctx.store is None:
+            return True
+        tasso = await ctx.store.tasso_continuazione()
+        if tasso is None:
+            return True
+
+        pareggio = (CACHE_WRITE_MULTIPLIER["5m"] - 1.0) / (1.0 - CACHE_READ_MULTIPLIER)
+        if tasso >= pareggio:
+            return True
+        ctx.note(
+            f"nessun breakpoint sulla coda: solo il {tasso:.0%} delle conversazioni "
+            f"prosegue, sotto il pareggio del {pareggio:.0%}"
+        )
+        return False
 
     def _place_intermediate(
         self,

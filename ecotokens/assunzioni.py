@@ -175,6 +175,27 @@ ASSUNZIONI: list[Assunzione] = [
         come_verificarla="Già misurabile: la console mostra la taratura.",
     ),
     Assunzione(
+        nome="Cosa farebbe uno sviluppatore senza gateway",
+        valore="un `cache_control` sull'ultimo blocco del proprio system prompt",
+        fonte=DICHIARATA,
+        dove="pricing.baseline_ingenua_usd",
+        cosa_cambia=(
+            "Il numero che il progetto mette in cima alla console: **quanto "
+            "aggiunge EcoTokens**. Un concorrente modellato piu' ingenuo di "
+            "cosi' gonfia il nostro merito; uno modellato piu' bravo lo "
+            "sgonfia. Il modello sceglie la pratica documentata e piu' diffusa "
+            "- una riga - e conta il prefisso con lo stimatore locale, che "
+            "approssima per eccesso: l'errore va quindi a favore del "
+            "concorrente, cioe' contro di noi."
+        ),
+        come_verificarla=(
+            "Non con `--live`: nessuna chiamata dice cosa avrebbe fatto un "
+            "altro. Si verifica confrontando due integrazioni vere sullo stesso "
+            "traffico, ed e' una misura che richiede due sistemi, non due "
+            "richieste."
+        ),
+    ),
+    Assunzione(
         nome="Lunghezza di una risposta tipica",
         valore="600 token di output prima dell'effetto dell'effort",
         fonte=DICHIARATA,

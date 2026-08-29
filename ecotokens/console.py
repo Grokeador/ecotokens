@@ -53,6 +53,7 @@ async def build_console_data(gateway: Any) -> dict[str, Any]:
     sessioni = await store.list_sessions(10)
 
     baseline = float(stats.get("baseline_cost_usd") or 0)
+    ingenua = float(stats.get("baseline_ingenua_usd") or 0)
     costo = float(stats.get("cost_usd") or 0)
     richieste = int(stats.get("requests") or 0)
 
@@ -65,6 +66,19 @@ async def build_console_data(gateway: Any) -> dict[str, Any]:
             "baseline_cost_usd": baseline,
             "saved_usd": float(stats.get("saved_usd") or 0),
             "saved_ratio": (baseline - costo) / baseline if baseline else 0.0,
+            # Le due meta' dello stesso risparmio, separate.
+            #
+            # `baseline_cost_usd` prezza un client che non usa affatto la
+            # cache: oggi non esiste, e misurarsi contro di lui vuol dire
+            # prendersi il merito di uno sconto che Anthropic fa a chiunque.
+            # `baseline_ingenua_usd` prezza un client senza gateway che si
+            # mette da solo un `cache_control` in cima al system prompt, ed e'
+            # il confronto che risponde alla domanda vera: **conviene
+            # installarlo?**
+            "baseline_ingenua_usd": ingenua,
+            "quota_gateway_usd": ingenua - costo,
+            "quota_gateway_ratio": (ingenua - costo) / ingenua if ingenua else 0.0,
+            "quota_anthropic_usd": baseline - ingenua,
             "prompt_tokens": int(stats.get("total_prompt_tokens") or 0),
             "input_tokens": int(stats.get("input_tokens") or 0),
             "cache_creation_tokens": int(stats.get("cache_creation_tokens") or 0),
@@ -211,6 +225,35 @@ def _avvisi(dati: dict[str, Any]) -> list[dict[str, Any]]:
 
     if not richieste:
         return avvisi
+
+    # 0-bis. Il gateway sta guadagnandosi il posto?
+    #
+    # `.get` e non l'indice: questa funzione riceve cio' che il costruttore le
+    # passa, e deve saper tacere su una grandezza che non c'e' invece di far
+    # fallire tutta la pagina per una chiave in meno.
+    totali = dati.get("totals") or {}
+    quota = totali.get("quota_gateway_ratio", 0.0)
+    if totali.get("baseline_ingenua_usd") and quota < 0.02:
+        avvisi.append(
+            {
+                "level": "warn" if quota >= 0 else "bad",
+                # Il numero dell'avviso e' su quante richieste si regge il
+                # verdetto: la percentuale, che sta nel titolo, puo' valere
+                # zero, e zero e' proprio il caso in cui l'avviso serve di piu'.
+                "count": richieste,
+                "title": f"Il gateway aggiunge il {quota:.1%} a quello che la cache dà gratis",
+                "body": (
+                    "Il risparmio grosso in cima a questa pagina è quasi tutto di "
+                    "Anthropic: lo ottiene chiunque metta un `cache_control` sul "
+                    "proprio system prompt, senza installare niente. Quello che "
+                    "aggiunge EcoTokens si vede su traffico dove più richieste "
+                    "*diverse* condividono un prefisso — misurato +19,9% — e su "
+                    "richieste ripetute, dove la cache esatta azzera il costo. Su "
+                    "una conversazione singola non c’è quasi niente da aggiungere, "
+                    "ed è giusto saperlo prima di lasciarlo in mezzo."
+                ),
+            }
+        )
 
     # 1. Il declassamento del modello puo' spegnere la cache, in silenzio.
     #    Le soglie minime non sono monotone: Opus 5 ne chiede 512, Haiku 4.5
@@ -668,9 +711,15 @@ _JS = r"""
       ? "su $" + Number(s.daily_limit).toFixed(2) + " di tetto"
       : "nessun tetto impostato";
     return '<div class="verdict">' +
-      stat("Risparmio", pct(t.saved_ratio), usd(t.saved_usd) + " su " + intero(d.requests) + " richieste", true) +
+      stat("Merito del gateway", pct(t.quota_gateway_ratio),
+           usd(t.quota_gateway_usd) + " rispetto a un client che usa la cache da sé", true) +
+      stat("Risparmio totale", pct(t.saved_ratio),
+           usd(t.saved_usd) + " su " + intero(d.requests) + " richieste") +
       stat("Costo reale", usd(t.cost_usd), "quello che è stato speso") +
-      stat("Senza gateway", usd(t.baseline_cost_usd), "stesso traffico a prezzo pieno") +
+      stat("Client accorto, senza gateway", usd(t.baseline_ingenua_usd),
+           "un `cache_control` sul system prompt, e basta") +
+      stat("Client che non usa la cache", usd(t.baseline_cost_usd),
+           "tutto a prezzo pieno: oggi non lo fa nessuno") +
       stat("Prompt da cache", pct(t.cache_hit_ratio), intero(t.cache_read_tokens) + " token a 0,1x") +
       stat("Spesa di oggi", usd(s.today_usd), tetto) +
       stat("Nel mese", usd(s.month_usd), "profilo: " + d.profile) +

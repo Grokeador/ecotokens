@@ -194,6 +194,55 @@ def baseline_cost_usd(model: str, usage: Usage) -> float:
     )
 
 
+def baseline_ingenua_usd(
+    model: str,
+    usage: Usage,
+    prefisso_stabile: int,
+    *,
+    prefisso_freddo: bool = False,
+) -> float:
+    """Costo della stessa richiesta per un client **senza gateway ma non ingenuo**.
+
+    `baseline_cost_usd` prezza tutto a tariffa piena, cioe' un client che non
+    usa affatto il prompt caching. Come confronto e' un fantoccio: chiunque
+    integri l'API oggi mette un `cache_control` in cima al proprio system
+    prompt, e Anthropic gli sconta il prefisso stabile senza chiedere niente in
+    cambio. Attribuire quel risparmio al gateway vuol dire prendersi il merito
+    di una funzione che c'e' comunque - ed e' la meta' piu' grossa del numero.
+
+    Il modello dichiarato e' il piu' semplice che sia realistico: un solo
+    breakpoint alla fine del blocco `system`, che nell'ordine di render cattura
+    anche i tool. Il prefisso stabile si paga una scrittura la prima volta e
+    letture dopo; tutto il resto - la conversazione, che cambia a ogni turno -
+    a tariffa piena.
+
+    `prefisso_freddo` va valorizzato con **lo stesso stato in cui eravamo noi**,
+    e chi chiama lo ricava da `cache_read_tokens`: se abbiamo riletto, il
+    prefisso era caldo per tutti e due. Confrontare un concorrente caldo con
+    noi freddi - o viceversa - e' la trappola che questo progetto ha gia'
+    calpestato due volte, e da' comodamente il risultato che si sperava.
+
+    E' una stima, e sta fra le assunzioni dichiarate del progetto: usa il
+    conteggio locale del prefisso, non quello dell'API.
+    """
+    info = model_info(model)
+    stabile = max(0, min(prefisso_stabile, usage.total_prompt_tokens))
+    # Sotto la soglia minima del modello nessuna cache si forma, nemmeno per
+    # lui: allora la baseline realistica coincide con quella a prezzo pieno.
+    if stabile < info.cache_min_tokens:
+        return baseline_cost_usd(model, usage)
+
+    resto = usage.total_prompt_tokens - stabile
+    moltiplicatore = (
+        CACHE_WRITE_MULTIPLIER["5m"] if prefisso_freddo else CACHE_READ_MULTIPLIER
+    )
+    return (
+        stabile * info.input_per_mtok * moltiplicatore / 1_000_000
+        + resto * info.input_per_mtok / 1_000_000
+        + usage.output_tokens * info.output_per_mtok / 1_000_000
+    )
+
+
 def savings_usd(model: str, usage: Usage, cache_ttl: str = "5m") -> float:
     """Differenza tra baseline e costo effettivo. Puo' essere negativa.
 

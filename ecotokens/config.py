@@ -78,6 +78,16 @@ class CachePlannerSettings(BaseModel):
     # La finestra di lookback e' di 20 blocchi: oltre quella distanza il
     # breakpoint non trova la voce precedente e la cache manca in silenzio.
     intermediate_every_blocks: int = 15
+    # Marcare la coda di una richiesta al **primo** turno e' una scommessa:
+    # costa 0,25x subito e rende 0,9x solo se un turno successivo la rilegge.
+    # Il pareggio sta quindi a 0,25/0,9 = 27,8% di conversazioni che
+    # proseguono, e non e' un numero scelto: e' il rapporto fra i due
+    # moltiplicatori dell'API.
+    #
+    # Il gateway la osserva invece di indovinarla. Finche' le sessioni non
+    # bastano per una frazione stabile - venti - marca, che e' il
+    # comportamento di sempre.
+    adatta_primo_turno: bool = True
     # Saltare il primo turno sembra prudente e invece costa: il pareggio e' a 2
     # richieste, e il prefisso piu' grosso - prompt di sistema e definizioni dei
     # tool - e' condiviso fra richieste *diverse*, non solo fra i turni della

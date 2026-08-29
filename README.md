@@ -107,7 +107,7 @@ tabella [qui sopra](#quanto-aggiunge-a-chi-usa-già-il-caching-automatico).
 
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
-| **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, ma **+19,9%** a prefisso condiviso — [vedi sotto](#la-riga-che-cambia-la-lettura-di-tutte-le-altre) | nessuno |
+| **Prompt caching** | 0,7% oltre il caching automatico di Anthropic, **+19,9%** a prefisso condiviso; contro uno sviluppatore che marca il proprio system prompt, **+21,1%** su una conversazione che cresce e **−4,6%** su turni singoli — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
 | **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno; ma il profilo predefinito va oltre e lo tiene **sempre** al minimo |
 | **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
@@ -684,6 +684,42 @@ strutturale: il caching automatico mette il breakpoint dopo la domanda, quindi
 la voce che crea non serve a nessun'altra domanda. Un breakpoint su
 `system`+`tools` crea invece una voce che tutte le richieste successive
 rileggono.
+
+### Un terzo concorrente, ed è quello vero
+
+Le due tabelle qui sopra confrontano EcoTokens con chi **non usa la cache** e
+con chi la **delega al server**. Manca il caso più probabile di tutti: uno
+sviluppatore che legge la documentazione e mette un `cache_control` sul proprio
+system prompt. È una riga, è la pratica raccomandata, e non richiede di
+installare niente.
+
+È il confronto che risponde a «conviene installarlo», ed è quello che il
+registro calcola adesso su ogni richiesta — accanto al risparmio totale, non al
+posto suo. Misurato:
+
+| Traffico | Totale vs nessuna cache | di cui Anthropic | di cui EcoTokens |
+|---|---:|---:|---:|
+| una conversazione che cresce, 8 turni | 41,7% | 26,2% | **+21,1%** |
+| molti utenti, stesso system, turno singolo | 25,4% | 29,3% | **−4,6%** |
+| domande che si ripetono | 87,8% | 4,8% | **+87,1%** |
+
+Il segno cambia, e cambia per una ragione precisa. Su una conversazione che
+cresce EcoTokens mette in cache **la conversazione**, non solo il system: è
+esattamente ciò che quel `cache_control` in una riga non fa. Su molti utenti a
+turno singolo l'unica cosa condivisa è il system prompt, che l'altro ha già
+messo in cache da solo: non c'è niente da aggiungere, e il poco che il gateway
+fa in più lo paga. Sulle domande ripetute vince la cache esatta, che non sconta
+il prezzo di un token: lo azzera.
+
+La stima è **prudente per costruzione**: il prefisso del concorrente si conta
+con lo stimatore locale, che approssima per eccesso, quindi gli si accredita
+uno sconto un po' più grande del vero. Sbaglia a suo favore, cioè contro di noi.
+Un numero che lusinga chi lo misura non vale niente.
+
+La console mostra ora «Merito del gateway» in cima, e il risparmio totale
+sotto. Quando il primo scende sotto il 2% lo dice apertamente: su quel traffico
+il gateway non si sta ripagando, ed è meglio saperlo che leggere un 76%
+che appartiene quasi tutto a qualcun altro.
 
 ```toml
 [cache_planner]
