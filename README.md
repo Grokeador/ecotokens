@@ -115,12 +115,14 @@ tabella [qui sopra](#quanto-aggiunge-a-chi-usa-già-il-caching-automatico).
 | **Cache esatta** | richieste identiche servite a costo zero; **−56%** quando differiscono solo per spaziatura | nessuno |
 | **Cache semantica** *(spenta)* | richieste simili servite a costo zero | può restituire risposte sbagliate |
 | **Embedder proprio** | la cache semantica accetta qualunque oggetto con `embed(testi)`: chi ne ha già uno non deve installarne un secondo | — |
-| **Declassamento di modello** *(acceso nel profilo predefinito)* | 17,5%, più di tutti gli altri stadi tranne il caching | **cambia la risposta**, e azzera la cache — [vedi sotto](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione) |
+| **Declassamento di modello** *(spento nel profilo predefinito)* | 17,5%, più di tutti gli altri stadi tranne il caching | **cambia la risposta**, e azzera la cache — [vedi sotto](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione) |
 
-Il gateway esce sul profilo **aggressivo**, che cambia modello ed effort. Con
-`profilo = "prudente"` il contenuto non viene mai toccato. La distinzione è
-sviluppata in [I due profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione);
-la cache semantica resta spenta in entrambi.
+Il gateway esce sul profilo **prudente**: il contenuto di una risposta non
+viene mai toccato, e chi chiede Opus riceve Opus. Con `profilo = "aggressivo"`
+si accendono declassamento del modello ed effort minimo — vale di più, ma è
+un'altra risposta a un prezzo diverso. La distinzione è sviluppata in [I due
+profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione); la cache
+semantica resta spenta in entrambi.
 
 ## Tre vincoli che spiegano il progetto
 
@@ -453,9 +455,10 @@ repository:
 | costruzione di EcoTokens | $5,2262 | $0,2048 | **96%** | 82% |
 | **totale** | **$6,9987** | **$0,3294** | **95%** | 79% |
 
-Sono i numeri del profilo **aggressivo**, quello predefinito, misurati contro
-una baseline **senza alcuna cache**. Con il profilo `prudente` — che non tocca
-mai il contenuto di una risposta — il totale è **75,2%**. La differenza e cosa
+Sono i numeri del profilo **aggressivo**, che non è più quello predefinito,
+misurati contro una baseline **senza alcuna cache**. Con il profilo `prudente`
+— quello che il gateway spedisce, e che non tocca mai il contenuto di una
+risposta — il totale è **75,2%**. La differenza e cosa
 la produce stanno nella sezione [I due
 profili](#i-due-profili-e-cosa-distingue-davvero-unottimizzazione).
 
@@ -480,12 +483,20 @@ ricostruisce il traffico che un agente di codice produce scrivendolo.
 
 ## I due profili, e cosa distingue davvero un'ottimizzazione
 
-Il gateway esce configurato sul profilo **aggressivo**, che risparmia il 95,3%
-contro nessuna cache — l'85,2% contro un'applicazione che usa già il caching
-automatico. Prima di lasciarlo così vale la pena sapere cosa lo separa
-dall'altro, perché non è una differenza di grado.
+Il gateway esce configurato sul profilo **prudente**, che risparmia il 75,2%
+contro nessuna cache senza mai cambiare il contenuto di una risposta.
+L'aggressivo arriva al 95,3%, e prima di accenderlo vale la pena sapere cosa lo
+separa dall'altro, perché non è una differenza di grado.
 
-| | `prudente` | `aggressivo` *(predefinito)* |
+Fino alla 0.2.1 il predefinito era l'aggressivo. Lo ha cambiato una misura: su
+una chat di dieci turni con un system prompt di ~1.000 token costava $0,02763
+contro $0,08570 — un terzo — ma i token **riletti dalla cache erano zero**. Il
+declassamento porta a Haiku 4.5, la cui soglia minima di cache è 4096 token, e
+sotto quella il pianificatore non fa niente senza che nessuno lo segnali: il
+default spegneva la funzione principale del gateway per ottenere un risparmio
+di natura diversa.
+
+| | `prudente` *(predefinito)* | `aggressivo` |
 |---|---|---|
 | Risparmio contro nessuna cache | 75,2% | **95,3%** |
 | Risparmio contro il caching automatico | 23,2% | **85,2%** |

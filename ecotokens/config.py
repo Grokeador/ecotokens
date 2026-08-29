@@ -468,7 +468,26 @@ class Settings(BaseModel):
     #
     # Il profilo imposta dei default: qualunque campo scritto esplicitamente
     # nel file di configurazione vince su di esso.
-    profilo: Literal["prudente", "aggressivo"] = "aggressivo"
+    #
+    # Il predefinito e' **prudente**, ed e' stato aggressivo fino alla 0.2.1.
+    # La misura che ha fatto cambiare idea: su una chat di dieci turni con un
+    # system prompt di ~1.000 token, il profilo aggressivo costava $0,02763
+    # contro $0,08570 - un terzo - ma i token riletti dalla cache erano
+    # **zero**. Il declassamento porta a Haiku 4.5, la cui soglia minima di
+    # cache e' 4096 token: sotto quella il pianificatore, cioe' la funzione
+    # principale di questo gateway, non fa niente e nessuno lo segnala.
+    #
+    # Non e' l'unico motivo, e il secondo pesa di piu': il risparmio
+    # dell'aggressivo non e' la stessa risposta a meno prezzo, e' un'altra
+    # risposta. Un default che sostituisce in silenzio il modello chiesto
+    # sorprende chi installa, e i numeri che il progetto pubblica sono
+    # misurati col profilo prudente - lasciandolo aggressivo, la pagina
+    # dell'utente e il README dicevano cifre non confrontabili.
+    #
+    # Chi vuole l'aggressivo lo scrive: `profilo = "aggressivo"`. Vale 95,3%
+    # contro il prezzo pieno, ed e' una scelta legittima quando si sa che
+    # risposta si sta comprando.
+    profilo: Literal["prudente", "aggressivo"] = "prudente"
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)

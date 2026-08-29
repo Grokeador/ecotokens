@@ -1261,5 +1261,33 @@ TUNING_LOG: list[TuningEntry] = [
             "Opus su token che non costano niente."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Il profilo predefinito spegneva la funzione principale del gateway",
+        finding=(
+            "Il default spedito era `aggressivo`, che declassa a Haiku 4.5. La "
+            "soglia minima di cache di Haiku e' 4096 token, contro i 512 di Opus "
+            "5. Misurato su una chat di dieci turni con un system prompt di "
+            "~1.000 token: costo $0,02763 contro $0,08570 senza declassamento - "
+            "un terzo - ma **token riletti dalla cache: zero**. Con un system di "
+            "~5.000 token, 4.236 contro 30.196. Il README lo diceva gia' ('su un "
+            "prompt di 100 o 300 parole il profilo aggressivo perde del tutto la "
+            "cache'): era documentato e spedito lo stesso."
+        ),
+        effect=(
+            "Predefinito portato a `prudente`. Il risparmio dell'aggressivo e' "
+            "reale e resta disponibile con una riga, ma e' di natura diversa - "
+            "un'altra risposta a un prezzo diverso, non la stessa a meno - e un "
+            "default non dovrebbe scegliere per l'utente quale delle due sta "
+            "comprando. Il difetto del **metro** che lo accompagnava e' pero' il "
+            "piu' istruttivo: `bench._spegni_tutto` chiama "
+            "`applica_profilo_prudente`, quindi tutti i numeri pubblicati dal "
+            "progetto erano misurati senza declassamento mentre il profilo "
+            "spedito ce l'aveva acceso. La pagina dell'utente e il README "
+            "dicevano cifre non confrontabili, e quella dell'utente era piu' "
+            "grossa - la direzione che rende un confronto meno sospetto. Ora "
+            "`costo_modello_richiesto_usd` separa le due meta' ovunque."
+        ),
+    ),
 
 ]

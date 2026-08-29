@@ -41,9 +41,27 @@ def make_context(settings: Settings, messaggi, **extra):
 # --- cosa fa ogni profilo -------------------------------------------------
 
 
-def test_il_profilo_predefinito_e_aggressivo():
-    """Se cambiasse, cambierebbe in silenzio il comportamento di tutti."""
-    assert Settings().profilo == "aggressivo"
+def test_il_profilo_predefinito_e_prudente():
+    """Se cambiasse, cambierebbe in silenzio il comportamento di tutti.
+
+    E' stato aggressivo fino alla 0.2.1. Questo test ha fatto il proprio lavoro:
+    il cambio non e' passato inosservato, ha rotto qui.
+
+    Il predefinito e' prudente perche' l'aggressivo declassa a Haiku 4.5, la cui
+    soglia minima di cache e' 4096 token: su un system prompt tipico la cache
+    riletta risultava **zero**, cioe' il gateway spegneva la propria funzione
+    principale per fare un risparmio di natura diversa - un'altra risposta a un
+    prezzo diverso, non la stessa a meno.
+    """
+    assert Settings().profilo == "prudente"
+
+
+def test_il_predefinito_non_sostituisce_il_modello_chiesto():
+    """La proprieta' che il default deve garantire, indipendentemente dal nome
+    del profilo: chi chiede Opus riceve Opus."""
+    predefinito = Settings()
+    assert predefinito.router.model_downgrade is False
+    assert predefinito.router.effort_policy == "adattivo"
 
 
 def test_il_profilo_prudente_non_tocca_ne_modello_ne_effort():
@@ -228,17 +246,31 @@ def test_il_file_di_esempio_fa_quello_che_dichiara():
     grezzo = tomllib.loads(
         Path("ecotokens.example.toml").read_text(encoding="utf-8")
     )
-    assert grezzo["profilo"] == "aggressivo"
+    # Il controllo non nomina **quale** profilo: nominarlo lo farebbe fallire a
+    # ogni cambio del predefinito, cioe' proprio quando serve. Verifica invece
+    # l'invariante - il file dichiara un profilo e produce quel profilo - e che
+    # il predefinito del codice e quello del file di esempio coincidano.
+    dichiarato = grezzo["profilo"]
+    assert dichiarato == Settings().profilo, (
+        "il file di esempio dichiara un profilo diverso dal predefinito del "
+        "codice: chi lo copia cambierebbe comportamento senza volerlo"
+    )
 
     esempio = Settings.model_validate(grezzo)
-    assert esempio.router.model_downgrade is True
-    assert esempio.router.downgrade_policy == "sempre"
-    assert esempio.router.effort_policy == "sempre_basso"
+    if dichiarato == "aggressivo":
+        assert esempio.router.model_downgrade is True
+        assert esempio.router.downgrade_policy == "sempre"
+        assert esempio.router.effort_policy == "sempre_basso"
+    else:
+        assert esempio.router.model_downgrade is False
+        assert esempio.router.effort_policy == "adattivo"
 
     # E cambiando la sola riga in testa si deve ottenere l'altro profilo.
-    prudente = Settings.model_validate({**grezzo, "profilo": "prudente"})
-    assert prudente.router.model_downgrade is False
-    assert prudente.router.effort_policy == "adattivo"
+    altro = "prudente" if dichiarato == "aggressivo" else "aggressivo"
+    scambiato = Settings.model_validate({**grezzo, "profilo": altro})
+    assert scambiato.router.model_downgrade is (altro == "aggressivo")
+    atteso = "sempre_basso" if altro == "aggressivo" else "adattivo"
+    assert scambiato.router.effort_policy == atteso
 
 # --- la didascalia della dashboard -----------------------------------------
 

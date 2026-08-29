@@ -11,6 +11,20 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ## [Non rilasciato]
 
+### Rotture
+
+- **Il profilo predefinito è ora `prudente`, era `aggressivo`.** Chi non ha un
+  `ecotokens.toml` vedrà le richieste servite dal modello che ha chiesto, non
+  più declassate a Haiku 4.5, e spenderà di più: sulla chat di misura, $0,08570
+  invece di $0,02763. In cambio il prompt caching torna a funzionare — con il
+  declassamento acceso e un system prompt di ~1.000 token i token riletti dalla
+  cache erano **zero**, perché la soglia minima di Haiku è 4096. Per tornare al
+  comportamento precedente basta `profilo = "aggressivo"` in cima al file di
+  configurazione.
+- Di conseguenza il risparmio dichiarato da `stats` scende, e diventa
+  confrontabile con i numeri pubblicati nel README: prima non lo era, perché il
+  banco misura col profilo prudente e il gateway girava con l'aggressivo.
+
 ### Corretto
 
 - **Un nome di modello sconosciuto non produce più cifre inventate.** Il

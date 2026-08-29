@@ -19,7 +19,13 @@
 #
 # Il profilo imposta dei DEFAULT: qualunque campo scritto qui sotto vince su di
 # esso. Chi mette `model_downgrade = false` in [router] ottiene quello.
-profilo = "aggressivo"
+#
+# Il predefinito e' prudente. L'aggressivo declassa a Haiku 4.5, la cui
+# soglia minima di cache e' 4096 token: su un system prompt tipico
+# (~1.000 token) i token riletti dalla cache risultano ZERO, cioe' il
+# gateway spegne la propria funzione principale. Costa comunque un terzo,
+# ma con un'altra risposta - e questo va scelto, non subito.
+profilo = "prudente"
 
 [server]
 host = "127.0.0.1"
