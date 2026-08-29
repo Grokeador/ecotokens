@@ -318,3 +318,24 @@ async def test_un_prefisso_visto_molto_tempo_fa_torna_freddo(client):
     store._prefissi_visti["vecchio"] -= store._FINESTRA_PREFISSI + 1
 
     assert store.prefisso_gia_visto("vecchio") is False
+
+
+# --- lo stesso numero su tutte le superfici -------------------------------
+
+
+def test_ogni_superficie_mostra_il_merito_non_solo_il_totale():
+    """Correggere il numero su una pagina sola lo rende peggio che inutile:
+    chi guarda l'altra legge ancora il vecchio, e non sa che sono diversi.
+
+    Le superfici sono cinque - console, quadro, pannello, `stats`, dashboard -
+    e questo test le tiene insieme.
+    """
+    import inspect
+
+    from ecotokens import cli, console, dashboard, pannello, quadro
+
+    for modulo in (console, quadro, pannello, cli, dashboard):
+        sorgente = inspect.getsource(modulo)
+        assert "baseline_ingenua_usd" in sorgente or "merito" in sorgente.lower(), (
+            f"{modulo.__name__} mostra ancora solo il risparmio contro il fantoccio"
+        )

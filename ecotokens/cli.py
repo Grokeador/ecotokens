@@ -368,6 +368,26 @@ def stats(config: Optional[str] = typer.Option(None, help="Percorso del file di 
     table.add_row("Costo senza ottimizzazioni", f"${baseline:.4f}")
     style = "green" if saved >= 0 else "red"
     table.add_row("Risparmio", f"[{style}]${saved:.4f}[/]")
+
+    # Il confronto che decide se convenga tenerlo acceso. Quello sopra si
+    # misura contro un client che non usa affatto il prompt caching, cioe'
+    # contro nessuno: chiunque integri l'API oggi mette un `cache_control` sul
+    # proprio system prompt e ottiene lo sconto senza installare niente.
+    ingenua = float(data.get("baseline_ingenua_usd") or 0)
+    confrontabile = float(data.get("costo_confrontabile") or 0)
+    confrontabili = int(data.get("richieste_confrontabili") or 0)
+    if ingenua:
+        merito = ingenua - confrontabile
+        stile_merito = "green" if merito >= 0 else "red"
+        table.add_row("", "")
+        table.add_row(
+            "Costo per chi marca il proprio system prompt", f"${ingenua:.4f}"
+        )
+        table.add_row(
+            "[bold]Merito del gateway[/]",
+            f"[{stile_merito} bold]${merito:+.4f}  "
+            f"({merito / ingenua * 100:+.1f}% su {confrontabili:,} richieste)[/]",
+        )
     table.add_row("Spesa di oggi", f"${today:.4f}")
     table.add_row("Spesa del mese", f"${month:.4f}")
     console.print(table)

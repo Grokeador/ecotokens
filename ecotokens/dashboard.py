@@ -368,6 +368,18 @@ async def _live_traffic(store) -> dict[str, Any] | None:
         "cache_hit_ratio": stats.get("cache_hit_ratio", 0.0),
         "cost_usd": float(stats.get("cost_usd") or 0),
         "baseline_cost_usd": float(stats.get("baseline_cost_usd") or 0),
+        # Il confronto che decide se convenga tenerlo acceso: non contro chi
+        # non usa la cache - oggi non lo fa nessuno - ma contro chi si mette da
+        # solo un `cache_control` sul proprio system prompt.
+        "baseline_ingenua_usd": float(stats.get("baseline_ingenua_usd") or 0),
+        "merito_usd": float(stats.get("baseline_ingenua_usd") or 0)
+        - float(stats.get("costo_confrontabile") or 0),
+        "merito_nota": (
+            f"{(float(stats.get('baseline_ingenua_usd') or 0) - float(stats.get('costo_confrontabile') or 0)) / float(stats['baseline_ingenua_usd']) * 100:+.1f}%"
+            f" su {int(stats.get('richieste_confrontabili') or 0):,} richieste confrontabili"
+            if float(stats.get("baseline_ingenua_usd") or 0)
+            else "nessuna richiesta ancora confrontabile"
+        ),
         "saved_usd": float(stats.get("saved_usd") or 0),
         "by_source": stats.get("by_source") or [],
         "today_usd": today,
@@ -1478,7 +1490,9 @@ def _live(data: dict[str, Any]) -> str:
     {_stat('Prompt da cache', _fmt_pct(traffico['cache_hit_ratio']), 'quota dei token di input')}
     {_stat('Costo effettivo', _fmt_usd(traffico['cost_usd']), 'con le ottimizzazioni attive')}
     {_stat('Senza ottimizzazioni', _fmt_usd(traffico['baseline_cost_usd']), 'stesso traffico, prezzo pieno')}
-    {_stat('Risparmio', _fmt_usd(traffico['saved_usd']), 'differenza fra i due')}
+    {_stat('Risparmio totale', _fmt_usd(traffico['saved_usd']), 'differenza fra i due')}
+    {_stat('Chi marca il proprio system prompt', _fmt_usd(traffico['baseline_ingenua_usd']), 'un client senza gateway, ma non ingenuo')}
+    {_stat('Merito del gateway', _fmt_usd(traffico['merito_usd']), traffico['merito_nota'])}
     {_stat('Spesa di oggi', _fmt_usd(traffico['today_usd']), f"nel mese {_fmt_usd(traffico['month_usd'])}")}
   </div>
   <ul class="legend legend-wide">{origini}</ul>
