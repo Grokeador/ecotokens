@@ -83,3 +83,10 @@ include = ["ecotokens", "tests", "README.md", "LICENSE", "ecotokens.example.toml
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  # I comandi di misura girano un carico simulato intero: da 9 a 63 secondi
+  # l'uno. Restano nella corsa predefinita - un comando che nessun test esegue
+  # e' un comando che puo' essere rotto senza che nessuno lo sappia - ma si
+  # possono togliere dal ciclo veloce con `-m "not lento"`.
+  "lento: esegue un comando di misura per intero (decine di secondi)",
+]

@@ -119,4 +119,6 @@ Il dettaglio di ciascuna sta nel README, sezione «Trappole».
 `/impostazioni` `/quadro` `/` `/admin/dashboard`
 
 Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
-devono mai richiedere rete.
+devono mai richiedere rete. Ogni comando viene eseguito, non solo il suo
+`--help`; i dodici di misura sono marcati `lento` e si tolgono dal ciclo veloce
+con `-m "not lento"`.

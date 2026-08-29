@@ -45,7 +45,48 @@ def test_ogni_comando_ha_un_aiuto(nome):
 # Comandi che leggono soltanto: si possono eseguire davvero, senza rete, senza
 # spesa e senza toccare niente. Sono anche quelli che un utente prova per
 # primi, ed e' li' che un errore di collegamento fa la figura peggiore.
-SOLA_LETTURA = ["assunzioni", "diagnosi", "stats", "overhead", "cachewrites"]
+# Comandi che girano in meno di tre secondi: sempre nella corsa.
+SOLA_LETTURA = [
+    "assunzioni",
+    "diagnosi",
+    "stats",
+    "overhead",
+    "cachewrites",
+    "quadro",
+    "purge",
+    "substitutions",
+]
+
+# Comandi di misura: da 9 a 63 secondi l'uno, perche' ognuno gira un carico
+# simulato intero. Restano nella corsa predefinita e si tolgono con
+# `-m "not lento"`.
+#
+# Il motivo per cui ci sono: prima di questo elenco, quindici dei ventidue
+# comandi del gateway non venivano eseguiti da nessun test. `--help` prova che
+# la firma e' valida, non che il corpo giri: un import mancante, un campo
+# rinominato, una query che non combacia piu' con lo schema non si vedono da
+# `--help` e si vedono tutti alla prima riga eseguita. `serve` resta fuori
+# perche' non termina.
+LENTI = [
+    "cachekey",
+    "streaming",
+    "prompt",
+    "pruning",
+    "compaction",
+    "memoria",
+    "optimize",
+    "ceiling",
+    "ritenzione",
+    "dashboard",
+    "bench",
+    "ablate",
+]
+
+# La rete di sicurezza dell'elenco: se qualcuno aggiunge un comando e non lo
+# mette in nessuna delle due liste, questo test lo dice. Senza, l'elenco
+# invecchia in silenzio - ed e' gia' successo in questo file, dove la lista dei
+# comandi era scritta a mano e ne mancavano sette.
+NON_ESEGUIBILI = {"serve", "verifica"}
 
 
 @pytest.mark.parametrize("nome", SOLA_LETTURA)
@@ -64,6 +105,37 @@ def test_i_comandi_di_sola_lettura_girano_davvero(nome, tmp_path, monkeypatch):
     assert esito.exception is None or isinstance(esito.exception, SystemExit), (
         f"{nome} si e' rotto: {esito.exception!r}"
     )
+
+
+@pytest.mark.lento
+@pytest.mark.parametrize("nome", LENTI)
+def test_i_comandi_di_misura_girano_davvero(nome, tmp_path, monkeypatch):
+    """Stessa domanda dei comandi veloci, sui comandi che costano di piu'."""
+    monkeypatch.chdir(tmp_path)
+    esito = runner.invoke(cli.app, [nome])
+    assert esito.exit_code in (0, 1, 2), esito.output
+    assert esito.exception is None or isinstance(esito.exception, SystemExit), (
+        f"{nome} si e' rotto: {esito.exception!r}"
+    )
+
+
+def test_ogni_comando_registrato_e_in_una_delle_liste():
+    """Un comando che nessun test esegue e' un comando che puo' essere rotto
+    senza che nessuno lo sappia. Questo controllo impedisce che il prossimo
+    comando aggiunto scivoli fuori dall'elenco."""
+    registrati = {
+        c.name or c.callback.__name__ for c in cli.app.registered_commands
+    }
+    coperti = set(SOLA_LETTURA) | set(LENTI) | NON_ESEGUIBILI
+    scoperti = registrati - coperti
+    assert not scoperti, (
+        f"comandi che nessun test esegue: {sorted(scoperti)}. "
+        "Aggiungerli a SOLA_LETTURA se girano in pochi secondi, a LENTI "
+        "altrimenti, o a NON_ESEGUIBILI spiegando perche'."
+    )
+    # E il contrario: una lista che nomina comandi spariti non protegge niente.
+    fantasmi = coperti - registrati
+    assert not fantasmi, f"comandi elencati ma non piu' registrati: {sorted(fantasmi)}"
 
 
 def test_verifica_si_rifiuta_di_girare_contro_il_simulatore():
