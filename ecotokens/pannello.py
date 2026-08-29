@@ -92,7 +92,10 @@ GRUPPI: tuple[Gruppo, ...] = (
             "automatico di Anthropic vale il 67,8% ed e' gratis per chiunque. "
             "Il pianificatore ne aggiunge 0,7 in media - meno 0,1 su una "
             "conversazione sola, piu' 19,9 quando molte richieste condividono un "
-            "prefisso."
+            "prefisso. Contro il confronto che conta davvero - uno sviluppatore "
+            "che mette un `cache_control` sul proprio system prompt, una riga - "
+            "il pianificatore vale +21,1% su una conversazione che cresce e "
+            "-4,6% su molti utenti a turno singolo."
         ),
         campi=(
             Campo("cache_planner.enabled", "Pianificatore acceso", "booleano",
@@ -104,6 +107,15 @@ GRUPPI: tuple[Gruppo, ...] = (
                   scelte=("automatico", "manuale")),
             Campo("cache_planner.max_breakpoints", "Breakpoint massimi", "numero",
                   "L'API ne accetta al massimo 4.", minimo=0, massimo=4),
+            Campo("cache_planner.adatta_primo_turno",
+                  "Osserva se conviene marcare la coda", "booleano",
+                  "Marcare la coda di una richiesta appena arrivata costa 0,25x "
+                  "subito e rende 0,9x solo se qualcuno la rilegge: conviene sopra "
+                  "il 27,8% di conversazioni che proseguono, che e' il rapporto fra "
+                  "i due moltiplicatori dell'API e non un numero scelto. Acceso, il "
+                  "gateway osserva quella frazione sulle proprie sessioni invece di "
+                  "indovinarla. Misurato su traffico a turno singolo: +1,6 punti e "
+                  "scritture di cache da 25.046 token a 3.967."),
         ),
     ),
     Gruppo(

@@ -18,6 +18,8 @@ import time
 import pytest
 
 from ecotokens.config import Settings
+
+from .conftest import chat_payload
 from ecotokens.pricing import Usage
 from ecotokens.quadro import _eta, build_quadro_data, render_quadro
 from ecotokens.store.db import Database
@@ -207,3 +209,18 @@ async def test_il_traffico_registrato_compare(store):
     assert "80.0%" in pagina, "risparmio del traffico vero"
     # E il conteggio per stadio, che distingue "muto" da "spento".
     assert "1/1" in pagina and "0/1" in pagina
+
+
+async def test_il_quadro_mostra_il_merito_accanto_al_risparmio(client):
+    """Il risparmio totale si misura contro un client che non usa affatto la
+    cache: comprende quindi lo sconto che Anthropic fa a chiunque. Mostrarlo da
+    solo attribuisce al gateway anche quello."""
+    from ecotokens.quadro import build_quadro_data, render_quadro
+
+    client.post("/v1/chat/completions", json=chat_payload())
+    dati = await build_quadro_data(client.gateway.settings, client.gateway.store)
+    pagina = render_quadro(dati)
+
+    assert "merito del gateway" in pagina
+    assert "vs chi marca il proprio system prompt" in pagina
+    assert "vs nessuna cache" in pagina

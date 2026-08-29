@@ -476,3 +476,28 @@ def test_la_console_legge_gli_stadi_dalla_pipeline_non_dalla_configurazione(clie
     nella_pipeline = [s.name for s in client.gateway.pipeline.stages]
     dalla_console = [voce["name"] for voce in client.get("/admin/live").json()["config"]]
     assert dalla_console == nella_pipeline
+
+
+def test_il_registro_non_compare_fra_gli_stadi_inerti():
+    """Il suo mestiere e' scrivere una riga per ogni richiesta; le note le
+    emette solo quando qualcosa non va. Zero note e' una buona notizia, e
+    metterlo in un elenco di stadi che "non sono mai intervenuti" la
+    trasforma in un sospetto."""
+    avvisi = _avvisi(
+        {
+            "requests": 20,
+            "stages": [
+                {"stage": "ledger", "acted_in": 0, "enabled_in": 20, "notes": []},
+                {"stage": "session", "acted_in": 0, "enabled_in": 20, "notes": []},
+                {"stage": "memory", "acted_in": 0, "enabled_in": 20, "notes": []},
+            ],
+            "cache_writes": {},
+            "spend": {"enabled": False},
+            "calibration": [],
+        }
+    )
+    inerti = [a for a in avvisi if "mai intervenuti" in a["title"]]
+    assert inerti, "memory inerte va segnalato"
+    assert "memory" in inerti[0]["title"]
+    assert "ledger" not in inerti[0]["title"]
+    assert "session" not in inerti[0]["title"]

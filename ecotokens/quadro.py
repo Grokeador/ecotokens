@@ -459,22 +459,41 @@ def render_quadro(d: dict[str, Any]) -> str:
     if traffico.get("requests"):
         base = float(traffico.get("baseline_cost_usd") or 0)
         costo = float(traffico.get("cost_usd") or 0)
-        corpo_traffico = _righe(
+        # Le due meta'. Il risparmio totale si misura contro un client che non
+        # usa affatto la cache - oggi non esiste - e quindi comprende lo sconto
+        # che Anthropic fa a chiunque. Il merito e' quanto resta togliendolo, ed
+        # e' il numero che risponde a "conviene tenerlo acceso".
+        ingenua = float(traffico.get("baseline_ingenua_usd") or 0)
+        confrontabile = float(traffico.get("costo_confrontabile") or 0)
+        merito = (ingenua - confrontabile) / ingenua if ingenua else None
+        righe_traffico = [
+            (
+                "richieste",
+                _num(traffico["requests"]),
+                f'{_num(traffico["total_prompt_tokens"])} token',
+            ),
+        ]
+        if merito is not None:
+            classe = "good" if merito > 0 else "bad"
+            righe_traffico.append(
+                (
+                    "merito del gateway",
+                    f'<b class="{classe}">{_pct(merito)}</b>',
+                    "vs chi marca il proprio system prompt",
+                )
+            )
+        righe_traffico.extend(
             [
                 (
-                    "richieste",
-                    _num(traffico["requests"]),
-                    f'{_num(traffico["total_prompt_tokens"])} token',
-                ),
-                (
-                    "risparmio",
-                    f'<b class="good">{_pct((base - costo) / base if base else 0)}</b>',
-                    f"{_usd(costo)} su {_usd(base)}",
+                    "risparmio totale",
+                    _pct((base - costo) / base if base else 0),
+                    f"{_usd(costo)} su {_usd(base)}, vs nessuna cache",
                 ),
                 ("prompt da cache", _pct(traffico.get("cache_hit_ratio", 0)), ""),
                 ("spesa oggi", _usd(d["spesa"]["oggi"]), f'mese {_usd(d["spesa"]["mese"])}'),
             ]
         )
+        corpo_traffico = _righe(righe_traffico)
     else:
         corpo_traffico = (
             '<p class="empty">Nessuna richiesta e&#768; ancora passata dal gateway. '

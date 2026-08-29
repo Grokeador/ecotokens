@@ -485,6 +485,17 @@ class Store:
                       COALESCE(SUM(cost_usd), 0)             AS cost_usd,
                       COALESCE(SUM(baseline_cost_usd), 0)    AS baseline_cost_usd,
                       COALESCE(SUM(baseline_ingenua_usd), 0) AS baseline_ingenua_usd,
+                      -- Il costo delle **sole** righe che hanno la baseline
+                      -- realistica. Le righe scritte prima che quella colonna
+                      -- esistesse hanno zero, e zero li' vuol dire "non
+                      -- registrata": sommarne il costo contro una baseline
+                      -- assente darebbe un merito del gateway spaventosamente
+                      -- negativo il giorno dell'aggiornamento, su traffico
+                      -- che non e' cambiato di una virgola.
+                      COALESCE(SUM(CASE WHEN baseline_ingenua_usd > 0
+                                        THEN cost_usd ELSE 0 END), 0) AS costo_confrontabile,
+                      COALESCE(SUM(CASE WHEN baseline_ingenua_usd > 0
+                                        THEN requests ELSE 0 END), 0) AS richieste_confrontabili,
                       COALESCE(SUM(saved_usd), 0)            AS saved_usd
                FROM ({self._CONSUMI})""",
             pesante=True,

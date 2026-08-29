@@ -259,3 +259,33 @@ def test_una_conversazione_che_prosegue_continua_a_marcare(client):
 
     note = " ".join(ultima.json()["ecotokens"]["notes"])
     assert "breakpoint sull'ultimo turno" in note, note
+
+
+# --- l'aggiornamento su un archivio che non conosce il conto nuovo --------
+
+
+async def test_le_righe_vecchie_non_falsano_il_merito(client):
+    """Un archivio pieno di storia non ha la baseline realistica: quella
+    colonna non esisteva. Zero li' significa **non registrata**, e metterne il
+    costo contro una baseline assente darebbe un merito spaventosamente
+    negativo il giorno dell'aggiornamento, su traffico che non e' cambiato.
+    """
+    from ecotokens.pricing import Usage
+
+    store = client.gateway.store
+    # Una riga com'era prima: costo reale, baseline realistica assente.
+    await store.record_usage(
+        session_id=None,
+        model="claude-opus-5",
+        source="api",
+        usage=Usage(input_tokens=5_000, output_tokens=500),
+        cost_usd=0.05,
+        baseline_cost_usd=0.05,
+        saved_usd=0.0,
+    )
+    # E una scritta oggi.
+    client.post("/v1/chat/completions", json=chat_payload())
+
+    dati = client.get("/admin/live").json()["totals"]
+    assert dati["richieste_confrontabili"] == 1, "la riga vecchia non va confrontata"
+    assert -1.0 < dati["quota_gateway_ratio"] < 1.0

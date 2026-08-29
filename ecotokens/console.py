@@ -54,6 +54,8 @@ async def build_console_data(gateway: Any) -> dict[str, Any]:
 
     baseline = float(stats.get("baseline_cost_usd") or 0)
     ingenua = float(stats.get("baseline_ingenua_usd") or 0)
+    confrontabile = float(stats.get("costo_confrontabile") or 0)
+    confrontabili = int(stats.get("richieste_confrontabili") or 0)
     costo = float(stats.get("cost_usd") or 0)
     richieste = int(stats.get("requests") or 0)
 
@@ -76,9 +78,14 @@ async def build_console_data(gateway: Any) -> dict[str, Any]:
             # il confronto che risponde alla domanda vera: **conviene
             # installarlo?**
             "baseline_ingenua_usd": ingenua,
-            "quota_gateway_usd": ingenua - costo,
-            "quota_gateway_ratio": (ingenua - costo) / ingenua if ingenua else 0.0,
+            "quota_gateway_usd": ingenua - confrontabile,
+            "quota_gateway_ratio": (ingenua - confrontabile) / ingenua if ingenua else 0.0,
             "quota_anthropic_usd": baseline - ingenua,
+            # Su quante richieste si regge il confronto. Puo' essere meno del
+            # totale: le righe scritte prima che questo conto esistesse non
+            # hanno la baseline realistica, e includerle metterebbe il loro
+            # costo contro una baseline assente.
+            "richieste_confrontabili": confrontabili,
             "prompt_tokens": int(stats.get("total_prompt_tokens") or 0),
             "input_tokens": int(stats.get("input_tokens") or 0),
             "cache_creation_tokens": int(stats.get("cache_creation_tokens") or 0),
@@ -320,7 +327,18 @@ def _avvisi(dati: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     # 4. Stadi accesi che non hanno mai fatto niente.
-    muti = [voce["stage"] for voce in stadi if voce["acted_in"] == 0]
+    #
+    # Il registro no: il suo mestiere e' scrivere una riga per ogni richiesta,
+    # e le note le emette **solo quando qualcosa non va** - una scrittura di
+    # cache non ripagata, una chiamata interna da conteggiare. Zero note vuol
+    # dire che e' andato tutto bene, e metterlo in un elenco di stadi inerti
+    # trasforma una buona notizia in un sospetto.
+    SEMPRE_SILENZIOSI = {"ledger", "session"}
+    muti = [
+        voce["stage"]
+        for voce in stadi
+        if voce["acted_in"] == 0 and voce["stage"] not in SEMPRE_SILENZIOSI
+    ]
     if muti:
         avvisi.append(
             {
@@ -712,7 +730,8 @@ _JS = r"""
       : "nessun tetto impostato";
     return '<div class="verdict">' +
       stat("Merito del gateway", pct(t.quota_gateway_ratio),
-           usd(t.quota_gateway_usd) + " rispetto a un client che usa la cache da sé", true) +
+           usd(t.quota_gateway_usd) + " su " + intero(t.richieste_confrontabili) +
+           " richieste, contro un client che usa la cache da sé", true) +
       stat("Risparmio totale", pct(t.saved_ratio),
            usd(t.saved_usd) + " su " + intero(d.requests) + " richieste") +
       stat("Costo reale", usd(t.cost_usd), "quello che è stato speso") +
