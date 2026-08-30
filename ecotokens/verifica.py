@@ -478,6 +478,37 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
             {"role": "user", "content": blocco(f"risultato del tool: {corpo}")},
         ]
 
+    # Il testimone di chiusura, e non e' una ripetizione del primo.
+    #
+    # Misurato: il testimone d'apertura e' passato, i tre turni hanno dato zero,
+    # e un minuto dopo lo stesso testimone falliva. La rilettura su questo
+    # account va e viene su una scala di **minuti**, cioe' piu' corta della
+    # misura che deve sorvegliare. Un controllo che apre con una verifica di
+    # validita' e poi misura per un minuto sta assumendo che le condizioni
+    # reggano per tutto quel minuto - e qui non reggono.
+    #
+    # Quindi si richiede la stessa prova alla fine. Se una delle due cade, la
+    # finestra non era buona e non si conclude niente.
+    chiusura = await client.messages.create(
+        model=modello, max_tokens=16, messages=[con_marcatore(apertura[0])]
+    )
+    if _usage(chiusura)["cache_read_input_tokens"] <= 0:
+        return Controllo(
+            assunzione="Il prefisso di conversazione regge fra i turni",
+            atteso="riletture > 0 dal secondo turno, e in crescita",
+            osservato=(
+                f"riletture: {letture[0]}, {letture[1]}, {letture[2]}, "
+                "ma la cache ha smesso di rileggere durante la misura"
+            ),
+            esito=INDETERMINATO,
+            nota=(
+                "Il testimone reggeva all'inizio e non alla fine: le condizioni "
+                "sono cambiate **mentre** si misurava. Le riletture qui sopra "
+                "non dicono niente sul prefisso."
+            ),
+            chiamate=6,
+        )
+
     # Due domande distinte, e tenerle separate cambia la conclusione. La prima
     # e' se il prefisso **regge**: al secondo e terzo turno si rilegge qualcosa
     # invece di riscrivere tutto. La seconda e' se cio' che si rilegge
@@ -507,7 +538,7 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
             "primo messaggio e si riscrive la coda a ogni turno. Il risparmio "
             "esiste ed e' piu' piccolo di quello assunto."
         ),
-        chiamate=5,
+        chiamate=6,
     )
 
 
@@ -522,7 +553,7 @@ CONTROLLI = (
 
 # Quante chiamate costa l'intera verifica. Dichiarato prima di eseguirla:
 # un comando che spende deve dire quanto prima di spendere.
-CHIAMATE_PREVISTE = 14
+CHIAMATE_PREVISTE = 15
 
 
 async def verifica(client, modello: str, *, circolare: bool = False) -> Rapporto:

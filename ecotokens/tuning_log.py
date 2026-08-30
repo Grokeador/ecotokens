@@ -1502,5 +1502,27 @@ TUNING_LOG: list[TuningEntry] = [
             "smentita, mentre la vecchia condizione unica le confondeva."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Il testimone d'apertura non copriva la misura che doveva sorvegliare",
+        finding=(
+            "Rifatta la verifica col testimone appena aggiunto: il testimone "
+            "**e' passato**, i tre turni hanno dato zero, e la divergenza "
+            "sembrava finalmente credibile. Un minuto dopo, in una sonda "
+            "separata, lo stesso testimone falliva. La rilettura su questo "
+            "account va e viene su una scala di **minuti** - piu' corta della "
+            "misura che il testimone doveva convalidare."
+        ),
+        effect=(
+            "Aggiunto un testimone **di chiusura**: se una delle due prove "
+            "cade, la finestra non era buona e l'esito e' INDETERMINATO. La "
+            "lezione e' piu' generale del caso: un controllo di validita' "
+            "eseguito *prima* di una misura assume che le condizioni reggano "
+            "per tutta la durata della misura, e quando la grandezza "
+            "disturbante varia piu' in fretta della misura stessa quel "
+            "controllo non copre niente. Vale per ogni misura di questo "
+            "progetto che duri piu' di una chiamata."
+        ),
+    ),
 
 ]

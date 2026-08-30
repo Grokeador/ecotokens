@@ -257,10 +257,11 @@ async def test_una_rilettura_ferma_e_una_tenuta_debole_non_una_smentita():
     client = _ClientFinto(
         [
             _Risposta(scritti=5000),
-            _Risposta(riletti=2809),
-            _Risposta(riletti=0),
-            _Risposta(riletti=2809),
-            _Risposta(riletti=2809),
+            _Risposta(riletti=2809),   # testimone d'apertura
+            _Risposta(riletti=0),      # turno 0
+            _Risposta(riletti=2809),   # turno 1
+            _Risposta(riletti=2809),   # turno 2
+            _Risposta(riletti=2809),   # testimone di chiusura
         ]
     )
     controllo = await _ciclo_agentico(client, "claude-opus-5")
@@ -275,12 +276,35 @@ async def test_se_il_prefisso_non_regge_e_una_smentita_vera():
     client = _ClientFinto(
         [
             _Risposta(scritti=5000),
-            _Risposta(riletti=2809),
-            _Risposta(riletti=0),
-            _Risposta(riletti=0),
-            _Risposta(riletti=0),
+            _Risposta(riletti=2809),   # testimone d'apertura
+            _Risposta(riletti=0),      # turno 0
+            _Risposta(riletti=0),      # turno 1
+            _Risposta(riletti=0),      # turno 2
+            _Risposta(riletti=2809),   # testimone di chiusura: regge
         ]
     )
     controllo = await _ciclo_agentico(client, "claude-opus-5")
     assert controllo.esito == DIVERGE
     assert "README" in controllo.nota
+
+
+async def test_il_ciclo_agentico_si_ferma_se_la_cache_smette_durante_la_misura():
+    """Il testimone d'apertura non basta: la rilettura su un account reale va e
+    viene su una scala di minuti, piu' corta della misura che deve sorvegliare.
+    Osservato: apertura valida, tre turni a zero, e un minuto dopo lo stesso
+    testimone falliva."""
+    from ecotokens.verifica import INDETERMINATO, _ciclo_agentico
+
+    client = _ClientFinto(
+        [
+            _Risposta(scritti=5000),   # apertura: scrive
+            _Risposta(riletti=2809),   # testimone d'apertura: valido
+            _Risposta(riletti=0),      # turno 0
+            _Risposta(riletti=0),      # turno 1
+            _Risposta(riletti=0),      # turno 2
+            _Risposta(riletti=0),      # testimone di chiusura: caduto
+        ]
+    )
+    controllo = await _ciclo_agentico(client, "claude-opus-5")
+    assert controllo.esito == INDETERMINATO
+    assert "smesso di rileggere durante la misura" in controllo.osservato
