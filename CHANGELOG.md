@@ -11,7 +11,31 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ## [Non rilasciato]
 
+### Numeri cambiati
+
+- **I moltiplicatori dell'effort erano circa il doppio più generosi del vero.**
+  Misurati il 30 agosto 2026 su cinque compiti di natura diversa: `low` toglie
+  il **25%** dei token generati, non il 60%, e `medium` non toglie niente di
+  misurabile (0,94x). Il verso stesso non regge sempre — su una domanda
+  fattuale corta, `xhigh` e `max` generano *meno* di `high`. Conseguenza sui
+  numeri pubblicati: il valore che il gateway aggiunge sopra il caching
+  automatico scende da **21,9% a 17,0%**.
+- **Il +22,6% su una chat che cresce era +1,1%.** Ricalcolato con il comando
+  nuovo: in una conversazione con un system prompt grosso e turni brevi, chi lo
+  marca da sé cattura già il 57,7% e non resta quasi niente da aggiungere. Il
+  **+52% sul ciclo agentico regge** (+52,3%), ed è la riga che descrive un
+  assistente di sviluppo.
+
 ### Nuovo
+
+- **`ecotokens merito`** — ricalcola la tabella di testa del README: quanto
+  aggiunge il gateway a chi un `cache_control` sul proprio system prompt se lo
+  mette già da solo. Fino ad ora **nessun comando la produceva**: veniva da uno
+  script scritto una volta e buttato, e i valori vivevano in due copie a mano.
+  Il difetto non era che fossero sbagliati, era che non potevano accorgersene —
+  e infatti sono rimasti fermi per mesi mentre il resto delle misure si
+  muoveva. Una misura che nessun comando ricalcola non invecchia male:
+  invecchia invisibile.
 
 - **Deduplicazione dei `tool_result`, spenta** (`[context] dedup_tool_results`).
   In un ciclo agentico lo stesso file viene riletto in turni diversi e

@@ -116,7 +116,8 @@ Il dettaglio di ciascuna sta nel README, sezione «Trappole».
 `serve` `stats` `purge` `diagnosi` `assunzioni` `verifica` `consiglia` ·
 misure: `bench`
 `ablate` `optimize` `compaction` `prompt` `substitutions` `cachekey` `overhead`
-`pruning` `ritenzione` `memoria` `ceiling` `cachewrites` `streaming` · pagine:
+`pruning` `ritenzione` `memoria` `ceiling` `cachewrites` `streaming` `merito`
+· pagine:
 `/impostazioni` `/quadro` `/` `/admin/dashboard`
 
 Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non

@@ -117,7 +117,7 @@ tabella [qui sopra](#quanto-aggiunge-a-chi-usa-già-il-caching-automatico).
 
 | Tecnica | Risparmio | Rischio |
 |---|---|---|
-| **Prompt caching** | contro uno sviluppatore che marca il proprio system prompt: **+52%** su un ciclo agentico, **+22,6%** su una chat che cresce, **−0,2%** su turni singoli — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
+| **Prompt caching** | contro uno sviluppatore che marca il proprio system prompt: **+52,3%** su un ciclo agentico, **+75,6%** su domande ripetute, **+1,1%** su una chat che cresce, **−0,1%** su turni singoli — ricalcolabili con `ecotokens merito` — [vedi sotto](#un-terzo-concorrente-ed-è-quello-vero) | nessuno |
 | **Effort adattivo** | 3,5% del risparmio; fino all'11,4% accettando un rischio sui turni con tool | nessuno; ma il profilo predefinito va oltre e lo tiene **sempre** al minimo |
 | **Potatura del contesto** | 1,2% del risparmio; **+7,8%** sul carico agentico lento | perde i risultati di tool vecchi |
 | **Compattazione con riassunto** | −10% se il taglio avanza a scatti; **+40%** di costo se insegue la conversazione | perdita di dettaglio |
@@ -737,24 +737,29 @@ installare niente.
 registro calcola adesso su ogni richiesta — accanto al risparmio totale, non al
 posto suo. Misurato:
 
-> **Questi cinque numeri sono da rifare, e vale la pena dire perché.** Sono
-> stati misurati con il modello dell'effort che il 30 agosto 2026 si è rivelato
-> circa il doppio più generoso del vero (vedi la tabella di ablazione sopra):
-> la stessa correzione ha abbassato di un quarto il valore aggiunto del gateway
-> nell'ablazione, e qui agirà nello stesso verso, più forte dove il router
-> abbassa l'effort. La ragione per cui sono invecchiati senza che nessuno se ne
-> accorgesse è la parte che conta: **nessuno dei comandi di misura li
-> riproduce**. Vengono da uno script estemporaneo e vivono solo qui e dentro
-> `ecotokens/consiglia.py`. Un numero che nessun comando sa ricalcolare non è
-> una misura: è una citazione.
+Si ricalcola con **`ecotokens merito`**, e fino al 30 agosto 2026 non era così:
+questi numeri venivano da uno script scritto una volta e buttato, e vivevano in
+due copie a mano, qui e in `consiglia.MERITO`. Il difetto non era che fossero
+sbagliati — era che **non potevano accorgersene**. Il giorno in cui l'effetto
+dell'effort è stato misurato invece che assunto, `ablate` è cambiato di un
+quarto e questi sono rimasti fermi. Una misura che nessun comando ricalcola non
+invecchia male: invecchia invisibile.
 
-| Traffico | Totale vs nessuna cache | di cui Anthropic | di cui EcoTokens |
-|---|---:|---:|---:|
-| **ciclo agentico, 20 turni con tool** | 53,6% | 3,4% | **+52,0%** |
-| ciclo agentico, 8 chiamate per turno | 57,2% | 3,2% | **+55,7%** |
-| domande che si ripetono | 87,8% | 4,5% | **+87,2%** |
-| una conversazione che cresce, 8 turni | 41,7% | 24,7% | **+22,6%** |
-| molti utenti, stesso system, turno singolo | 26,3% | 26,4% | **−0,2%** |
+| Traffico | Totale vs nessuna cache | di cui Anthropic | di cui EcoTokens | prima |
+|---|---:|---:|---:|---:|
+| **ciclo agentico, 20 turni con tool** | 53,3% | 2,1% | **+52,3%** | +52,0% |
+| ciclo agentico, 8 chiamate per turno | 51,2% | 2,8% | **+49,8%** | +55,7% |
+| domande che si ripetono | 78,5% | 11,8% | **+75,6%** | +87,2% |
+| una conversazione che cresce, 8 turni | 58,1% | 57,7% | **+1,1%** | +22,6% |
+| molti utenti, stesso system, turno singolo | 51,6% | 51,7% | **−0,1%** | −0,2% |
+
+La colonna «prima» è quella che il README ha portato per mesi. La riga di testa
+regge — ed è quella che descrive un assistente di sviluppo. **Il +22,6% sulla
+chat no: era +22,6% e ora è +1,1%**, e guardando la colonna centrale si capisce
+perché, senza bisogno di ipotesi: in una conversazione con un system prompt
+grosso e turni brevi, chi lo marca da sé cattura già il 57,7%, e non resta
+quasi niente da aggiungere. Il gateway serve dove il prefisso che vale **non è**
+il system prompt.
 
 La riga di testa è quella che descrive un assistente di sviluppo, ed è la più
 favorevole di tutte per una ragione strutturale: in un ciclo agentico i

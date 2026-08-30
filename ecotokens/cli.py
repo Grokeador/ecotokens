@@ -199,6 +199,60 @@ def diagnosi(
 
 
 @app.command()
+def merito(
+    live: bool = typer.Option(
+        False, "--live", help="Usa l'API vera invece del simulatore (spende)"
+    ),
+) -> None:
+    """Quanto aggiunge il gateway a chi la cache se la mette gia' da solo.
+
+    E' la tabella di testa del README, e fino al 30 agosto 2026 **nessun
+    comando la produceva**: veniva da uno script buttato via, e i numeri
+    vivevano in due copie scritte a mano. Il difetto non era che fossero
+    sbagliati - era che non potevano accorgersene. Una misura che nessun
+    comando ricalcola non invecchia male: invecchia invisibile.
+
+    La colonna che decide e' l'ultima. Le altre due servono a isolarla: il
+    grosso del risparmio contro chi non usa la cache **lo regala Anthropic** a
+    chiunque scriva una riga, e prendersene il merito e' il modo piu' facile di
+    dire una cosa vera che inganna.
+    """
+    from .merito import calcola
+
+    rapporto = asyncio.run(calcola(live=live))
+
+    tabella = Table(
+        title="Quanto aggiunge EcoTokens a chi marca il proprio system prompt"
+    )
+    tabella.add_column("Traffico")
+    tabella.add_column("Richieste", justify="right")
+    tabella.add_column("Totale vs nessuna cache", justify="right")
+    tabella.add_column("di cui Anthropic", justify="right")
+    tabella.add_column("di cui EcoTokens", justify="right")
+    for riga in rapporto.righe:
+        merito_pct = riga.di_ecotokens * 100
+        tabella.add_row(
+            riga.etichetta,
+            f"{riga.richieste}",
+            f"{riga.totale * 100:.1f}%",
+            f"{riga.di_anthropic * 100:.1f}%",
+            f"[{'green' if merito_pct > 0 else 'red'}]{merito_pct:+.1f}%[/]",
+        )
+    console.print()
+    console.print(tabella)
+    if rapporto.simulato:
+        console.print(
+            "\n[dim]Misura simulata: la meccanica della cache e' fedele, i "
+            "conteggi di token sono proporzionali. Per numeri reali: --live.[/]"
+        )
+    console.print(
+        "[dim]La colonna centrale non e' merito del gateway: la si ottiene con "
+        "un `cache_control` sul proprio system prompt, senza installare "
+        "niente.[/]"
+    )
+
+
+@app.command()
 def consiglia(
     config: Optional[str] = typer.Option(None, help="Percorso del file di configurazione"),
 ) -> None:

@@ -2,8 +2,8 @@
 
 Il progetto ha ventidue comandi che misurano e nessuno che consigli. La
 differenza non e' di comodita': tutte le percentuali pubblicate sono medie su
-un corpus di scenari, e la stessa configurazione che rende **+52%** su un ciclo
-agentico rende **-0,2%** su molti utenti a turno singolo. Un numero medio fra
+un corpus di scenari, e la stessa configurazione che rende **+52,3%** su un
+ciclo agentico rende **-0,1%** su molti utenti a turno singolo. Un numero medio fra
 quei due non descrive nessuno.
 
 Questo modulo non misura niente di nuovo: legge il traffico gia' registrato,
@@ -29,19 +29,21 @@ CAMPIONE_MINIMO = 20
 # che marca il proprio system prompt. Sono i numeri del README, e stanno qui
 # per essere citati accanto al consiglio invece che ricordati a memoria.
 #
-# **Da rifare, e questo modulo e' la prova del perche'.** Sono stati misurati
-# con il modello dell'effort corretto il 30 agosto 2026, che era circa il doppio
-# piu' generoso del vero: la stessa correzione ha abbassato di un quarto il
-# valore aggiunto del gateway nell'ablazione, e qui agira' nello stesso verso.
-# Che stiano scritti a mano in una costante invece di uscire da un comando e'
-# esattamente il motivo per cui sono invecchiati senza che nessuno se ne
-# accorgesse - e resta il difetto piu' grosso di questo file. Un numero che
-# nessun comando sa ricalcolare non e' una misura: e' una citazione.
+# Restano scritti a mano, ma non sono piu' inventabili: **li ricalcola
+# `ecotokens merito`**, e questa costante e' una citazione di quel comando. Fino
+# al 30 agosto 2026 non lo era, e si e' visto: erano fermi da mesi mentre il
+# resto delle misure si muoveva, perche' nessun comando li produceva. Il primo
+# ricalcolo ha spostato la chat da +22,6% a **+1,1%** - chi marca il proprio
+# system prompt, in una conversazione con turni brevi, cattura gia' quasi tutto.
+#
+# Chi li aggiorna: eseguire `ecotokens merito` e copiare la colonna di destra.
+# Un test confronta questi valori con quelli del README, cosi' le due copie non
+# possono divergere in silenzio.
 MERITO = {
-    "agentico": "+52%",
-    "ripetitivo": "+87,2%",
-    "chat": "+22,6%",
-    "turno_singolo": "-0,2%",
+    "agentico": "+52,3%",
+    "ripetitivo": "+75,6%",
+    "chat": "+1,1%",
+    "turno_singolo": "-0,1%",
 }
 
 DESCRIZIONE = {

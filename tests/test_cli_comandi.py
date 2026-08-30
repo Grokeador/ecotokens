@@ -81,6 +81,7 @@ LENTI = [
     "dashboard",
     "bench",
     "ablate",
+    "merito",
 ]
 
 # La rete di sicurezza dell'elenco: se qualcuno aggiunge un comando e non lo

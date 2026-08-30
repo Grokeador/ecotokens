@@ -67,6 +67,20 @@ class Measurement:
     # proprio (il riassunto di compattazione). Tenuta separata perche' e' il
     # prezzo dell'ottimizzazione, non della richiesta dell'utente.
     aux_cost_usd: float = 0.0
+    # Le due baseline, portate via **dalla pipeline vera** invece che
+    # ricalcolate qui. Non e' pigrizia: i numeri piu' citati del progetto sono
+    # invecchiati proprio perche' vivevano in uno script a parte, e una seconda
+    # implementazione della stessa formula e' il modo in cui due copie
+    # divergono senza che nessun test se ne accorga.
+    #
+    #   `baseline_piena_usd`  - chi non usa affatto la cache. Un fantoccio:
+    #                           serve solo a isolare la riga sotto.
+    #   `baseline_ingenua_usd` - chi mette un `cache_control` sul proprio
+    #                           system prompt, cioe' la pratica documentata.
+    #                           E' il concorrente che risponde a «conviene
+    #                           installarlo».
+    baseline_piena_usd: float = 0.0
+    baseline_ingenua_usd: float = 0.0
     latency_ms: float = 0.0
     notes: list[str] = field(default_factory=list)
 
@@ -132,6 +146,8 @@ class BenchRun:
             aggregato.full_price_tokens += misura.full_price_tokens
             aggregato.cost_usd += misura.cost_usd
             aggregato.aux_cost_usd += misura.aux_cost_usd
+            aggregato.baseline_piena_usd += misura.baseline_piena_usd
+            aggregato.baseline_ingenua_usd += misura.baseline_ingenua_usd
             aggregato.latency_ms += misura.latency_ms
         return aggregato
 
@@ -307,6 +323,11 @@ async def _run_scenario(
             misura.full_price_tokens += ctx.usage.input_tokens
             misura.cost_usd += ctx.total_cost_usd
             misura.aux_cost_usd += ctx.aux_cost_usd
+            # `saved_usd` e' gia' la differenza fra la baseline a prezzo pieno
+            # e cio' che si e' speso: risommarci il costo la ricostruisce senza
+            # riscrivere la formula.
+            misura.baseline_piena_usd += ctx.saved_usd + ctx.total_cost_usd
+            misura.baseline_ingenua_usd += ctx.baseline_ingenua_usd
 
             if raccolta is not None and ctx.source == SOURCE_API:
                 # Solo le richieste arrivate davvero all'API: un hit della

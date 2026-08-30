@@ -94,8 +94,8 @@ GRUPPI: tuple[Gruppo, ...] = (
             "conversazione sola, piu' 19,9 quando molte richieste condividono un "
             "prefisso. Contro il confronto che conta davvero - uno sviluppatore "
             "che mette un `cache_control` sul proprio system prompt, una riga - "
-            "il pianificatore vale +52% su un ciclo agentico con tool, +22,6% "
-            "su una chat che cresce e -0,2% su molti utenti a turno singolo."
+            "il pianificatore vale +52,3% su un ciclo agentico con tool, +1,1% "
+            "su una chat che cresce e -0,1% su molti utenti a turno singolo."
         ),
         campi=(
             Campo("cache_planner.enabled", "Pianificatore acceso", "booleano",

@@ -1577,5 +1577,32 @@ TUNING_LOG: list[TuningEntry] = [
             "che vale di piu' fra quelli rimasti."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="`ecotokens merito`, e il +22,6% sulla chat che era +1,1%",
+        finding=(
+            "Scritto il comando mancante: cinque carichi, il profilo che **non "
+            "cambia la risposta**, e le due baseline portate via dalla pipeline "
+            "vera invece di riscrivere la formula - una seconda copia della "
+            "stessa aritmetica e' il modo in cui due numeri divergono senza che "
+            "nessun test se ne accorga. Primo ricalcolo contro i valori "
+            "pubblicati: ciclo agentico +52,3% contro +52,0% (regge), otto "
+            "chiamate per turno +49,8% contro +55,7%, domande ripetute +75,6% "
+            "contro +87,2%, turno singolo -0,1% contro -0,2%, e **la chat "
+            "+1,1% contro +22,6%**."
+        ),
+        effect=(
+            "La riga di testa - quella che descrive un assistente di codice - "
+            "regge, ed e' la piu' importante. La chat no, e la colonna centrale "
+            "dice perche' senza bisogno di ipotesi: con un system prompt grosso "
+            "e turni brevi, chi lo marca da se' cattura gia' il **57,7%**, e "
+            "non resta quasi niente da aggiungere. Il gateway serve dove il "
+            "prefisso che vale non e' il system prompt - che e' esattamente la "
+            "tesi del progetto, ma adesso e' misurata invece che raccontata. "
+            "Aggiunto anche un test che confronta `consiglia.MERITO` con la "
+            "tabella del README: restano due copie a mano, e senza un test che "
+            "le leghi sarebbero libere di divergere di nuovo."
+        ),
+    ),
 
 ]
