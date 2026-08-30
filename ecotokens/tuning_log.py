@@ -1524,5 +1524,58 @@ TUNING_LOG: list[TuningEntry] = [
             "progetto che duri piu' di una chiamata."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="L'effort rendeva meno della meta' di quanto il progetto assumeva",
+        finding=(
+            "Riparato il controllo, la misura e' stata rifatta come andava "
+            "fatta: cinque livelli per **cinque compiti di natura diversa** - "
+            "fattuale corto, spiegazione aperta, ragionamento, codice, "
+            "estrazione - lanciati insieme livello per livello, tetto a 32.000 "
+            "token, nessuna risposta troncata. Mediane osservate contro "
+            "dichiarate: low **0,75** contro 0,40, medium **0,94** contro 0,70, "
+            "xhigh **1,48** contro 1,60, max **2,22** contro 2,60. Due cose che "
+            "un compito solo non avrebbe potuto dire: `medium` non e' una leva "
+            "di risparmio (su un compito e' esattamente 1,00), e **il verso non "
+            "regge sempre** - su una domanda fattuale corta `xhigh` e `max` "
+            "generano *meno* di `high`, perche' non c'e' ragionamento dove "
+            "spendere."
+        ),
+        effect=(
+            "Moltiplicatori sostituiti con le mediane misurate. Rimisurata "
+            "l'ablazione a parita' di tutto il resto: effort adattivo da "
+            "**2,0% a 0,6%**, effort sempre basso da **1,8% a 0,9%**, e il "
+            "valore che il gateway aggiunge sopra il caching automatico da "
+            "**21,9% a 17,0%** - su una chat da 35,8% a 14,8%, su un ciclo "
+            "agentico da 8,2% a 1,4%. **Una sola assunzione sbagliata valeva un "
+            "quarto del merito dichiarato**, ed era sbagliata nel verso "
+            "comodo. Trovata solo perche' il controllo che la sorvegliava era "
+            "stato riparato lo stesso giorno: prima diceva che l'effort non "
+            "serviva a niente, e diceva il falso pure quello."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="I numeri piu' citati del progetto non li ricalcola nessun comando",
+        finding=(
+            "Propagando la correzione dell'effort si cercava il comando che "
+            "produce la tabella di testa del README - +52% agentico, +87,2% "
+            "ripetitivo, +22,6% chat, -0,2% turno singolo, contro uno "
+            "sviluppatore che marca il proprio system prompt. **Non esiste.** "
+            "Nessuno dei ventidue comandi la riproduce: viene da uno script "
+            "estemporaneo, e i valori vivono in due copie scritte a mano, nel "
+            "README e in `consiglia.MERITO`."
+        ),
+        effect=(
+            "Segnati in entrambi i posti come da rifare, invece di aggiornarli "
+            "a occhio: non avendo il comando, un numero nuovo sarebbe stato "
+            "inventato. E' la stessa lezione dell'ablazione, presa dall'altro "
+            "lato: rieseguire `ablate` oggi dava numeri diversi dal README "
+            "**gia' prima** della correzione, cioe' la tabella era invecchiata "
+            "in silenzio. Una misura che nessun comando ricalcola non invecchia "
+            "male: invecchia **invisibile**. Scrivere quel comando e' il lavoro "
+            "che vale di piu' fra quelli rimasti."
+        ),
+    ),
 
 ]

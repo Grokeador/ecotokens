@@ -670,16 +670,26 @@ ecotokens ablate
 Gli stadi si accendono uno alla volta: la differenza fra un gradino e il
 precedente è il contributo di quello stadio.
 
-| Stadio | Contributo | |
-|---|---:|---|
-| **caching automatico** | **67,8%** | non è del gateway: lo dà Anthropic |
-| pianificatore EcoTokens | 0,7% | quello che aggiunge *sopra* al precedente |
-| effort adattivo | 2,9% | |
-| cache esatta | 1,9% | |
-| potatura del contesto | 1,9% | |
-| riscrittura del prompt | 0,2% | |
-| effort sempre basso | 2,5% | solo nel profilo aggressivo |
-| modello economico | 17,4% | solo nel profilo aggressivo |
+| Stadio | Contributo | prima del 30 ago 2026 | |
+|---|---:|---:|---|
+| **caching automatico** | **71,0%** | 71,0% | non è del gateway: lo dà Anthropic |
+| pianificatore EcoTokens | 0,5% | 0,5% | quello che aggiunge *sopra* al precedente |
+| potatura del contesto | 2,3% | 2,4% | |
+| cache esatta | 1,3% | 1,3% | |
+| effort adattivo | **0,6%** | 2,0% | ⚠︎ ritarato sulla misura vera |
+| riscrittura del prompt | 0,1% | 0,1% | |
+| effort sempre basso | **0,9%** | 1,8% | solo nel profilo aggressivo |
+| modello economico | 18,3% | 16,5% | solo nel profilo aggressivo |
+
+La colonna di destra non è archeologia: è la parte istruttiva. Il 30 agosto 2026
+l'effetto dell'effort sui token generati è stato **misurato** invece che
+assunto, su cinque compiti di natura diversa, e i valori dichiarati erano circa
+il doppio più generosi del vero — `low` toglie un quarto dei token, non tre
+quinti, e `medium` non toglie niente di misurabile. Correggerli ha dimezzato
+entrambe le voci dell'effort, e ha portato il valore che il gateway aggiunge
+sopra il caching automatico da **21,9% a 17,0%**: su una chat da 35,8% a 14,8%,
+su un ciclo agentico da 8,2% a 1,4%. Un'assunzione sbagliata valeva un quarto
+del merito dichiarato.
 
 #### La riga che cambia la lettura di tutte le altre
 
@@ -726,6 +736,17 @@ installare niente.
 È il confronto che risponde a «conviene installarlo», ed è quello che il
 registro calcola adesso su ogni richiesta — accanto al risparmio totale, non al
 posto suo. Misurato:
+
+> **Questi cinque numeri sono da rifare, e vale la pena dire perché.** Sono
+> stati misurati con il modello dell'effort che il 30 agosto 2026 si è rivelato
+> circa il doppio più generoso del vero (vedi la tabella di ablazione sopra):
+> la stessa correzione ha abbassato di un quarto il valore aggiunto del gateway
+> nell'ablazione, e qui agirà nello stesso verso, più forte dove il router
+> abbassa l'effort. La ragione per cui sono invecchiati senza che nessuno se ne
+> accorgesse è la parte che conta: **nessuno dei comandi di misura li
+> riproduce**. Vengono da uno script estemporaneo e vivono solo qui e dentro
+> `ecotokens/consiglia.py`. Un numero che nessun comando sa ricalcolare non è
+> una misura: è una citazione.
 
 | Traffico | Totale vs nessuna cache | di cui Anthropic | di cui EcoTokens |
 |---|---:|---:|---:|

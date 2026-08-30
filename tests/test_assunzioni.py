@@ -80,10 +80,13 @@ def test_le_dichiarate_sono_segnate_come_tali():
     tutto il valore dell'elenco: la prima puo' essere invecchiata, la seconda
     puo' essere inventata."""
     dichiarate = {v.nome for v in per_fonte(DICHIARATA)}
-    assert "Effetto dell'effort sui token generati" in dichiarate
+    assert "Stima locale dei token" in dichiarate
     assert "Quanti tool result conserva la potatura" in dichiarate
     # E le tariffe no: quelle sono pubblicate.
     assert "Tariffe dei modelli" not in dichiarate
+    # L'effort era qui fino al 30 agosto 2026. Misurato su cinque compiti, e'
+    # passato a verificata - con valori diversi da quelli che dichiarava.
+    assert "Effetto dell'effort sui token generati" not in dichiarate
 
 
 # Il 30 agosto 2026 questo test si e' acceso, ed e' successo per la ragione
@@ -94,6 +97,7 @@ VERIFICATE_ATTESE = {
     "Soglie minime di cache",
     "Quattro breakpoint al massimo",
     "I parametri rimossi danno 400",
+    "Effetto dell'effort sui token generati",
 }
 
 

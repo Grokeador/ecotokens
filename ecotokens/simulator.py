@@ -343,18 +343,43 @@ def _prefix_table(items: list[str]) -> tuple[list[str], list[int]]:
     return digests, lunghezze
 
 
-# Effetto dell'effort sui token generati. **E' un modello dichiarato, non una
-# misura**: l'effort governa la profondita' del ragionamento, che viene
-# fatturato come output, ma il rapporto esatto fra i livelli dipende dal
-# compito e va verificato con `--live`. Serve perche' senza di esso il
-# simulatore restituirebbe sempre la stessa lunghezza e l'effort adattivo
-# risulterebbe inutile per costruzione.
+# Effetto dell'effort sui token generati. **Misurato**, il 30 agosto 2026, su
+# claude-opus-5: cinque livelli per cinque compiti di natura diversa, i cinque
+# livelli dello stesso compito lanciati insieme, tetto a 32.000 token e nessuna
+# risposta troncata. Prima di allora questi numeri erano dichiarati, e sbagliati
+# nel verso peggiore: piu' generosi del vero proprio dove il router se ne serve.
+#
+#   compito             low   medium   high   xhigh    max
+#   fattuale-corto     0,74     0,78   1,00    0,87   0,92
+#   spiegazione        0,75     0,99   1,00    1,24   1,28
+#   ragionamento       0,81     1,00   1,00    1,48   2,22
+#   codice             0,65     0,94   1,00    1,89   2,46
+#   estrazione         0,89     0,90   1,00    2,19   2,35
+#
+# Tre cose che i valori qui sotto non riescono a dire, e che vanno sapute.
+#
+# La prima: **abbassare l'effort rende meno della meta' di quanto si credeva.**
+# `low` toglie un quarto dei token generati, non tre quinti. Ogni cifra che
+# attribuisce un risparmio al primo livello del router era gonfiata di circa
+# due volte e mezzo.
+#
+# La seconda: **`medium` non e' una leva.** 0,94 di mediana, e su un compito
+# esattamente 1,00. Sceglierlo al posto di `high` non risparmia niente di
+# misurabile.
+#
+# La terza: **il verso non regge sempre.** Su una domanda fattuale corta,
+# `xhigh` e `max` hanno generato *meno* di `high` - non c'e' ragionamento da
+# approfondire, e l'effort alto non trova dove spenderlo. Un moltiplicatore
+# solo non rappresenta questo, e ai livelli alti la dispersione e' larga
+# (xhigh da 0,87 a 2,19). I valori sono le mediane: servono al simulatore, che
+# deve essere deterministico, e vanno letti come il centro di una nuvola, non
+# come una costante fisica.
 EFFORT_OUTPUT_MULTIPLIER = {
-    "low": 0.4,
-    "medium": 0.7,
+    "low": 0.75,
+    "medium": 0.94,
     "high": 1.0,
-    "xhigh": 1.6,
-    "max": 2.6,
+    "xhigh": 1.48,
+    "max": 2.22,
 }
 
 

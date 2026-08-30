@@ -20,16 +20,23 @@ Tre livelli, e la differenza fra i primi due è tutta:
 * ``dichiarata`` — un modello scelto da noi, plausibile e non verificato. Sono
   le voci che possono spostare un numero del README.
 * ``verificata`` — confrontata con l'API vera, con l'esito e la data scritti
-  accanto. Il 30 agosto 2026 sono diventate tre, dopo la prima esecuzione di
+  accanto. Il 30 agosto 2026 sono diventate quattro, dopo la prima esecuzione di
   ``ecotokens verifica --live``: le soglie minime di cache su Opus 5, il limite
-  dei quattro breakpoint, il 400 sui parametri rimossi. Le altre dieci restano
-  documentate o dichiarate, e finché è così va detto.
+  dei quattro breakpoint, il 400 sui parametri rimossi, e l'effetto dell'effort.
+  Le altre nove restano documentate o dichiarate, e finché è così va detto.
 
-Quella stessa esecuzione ha prodotto due verdetti di **smentita** che non erano
+Quella prima esecuzione ha prodotto due verdetti di **smentita** che non erano
 smentite — uno misurava il tetto di ``max_tokens`` invece dell'effort, l'altro
 girava in un momento in cui la cache non rileggeva nemmeno una richiesta
 identica. Sono stati corretti nei controlli, non qui: una voce di questo file
 non cambia perché lo strumento ha sbagliato a guardarla.
+
+Ma la voce dell'effort è cambiata **poi**, per la ragione giusta, e vale la pena
+dire come. Riparato il controllo, la misura è stata rifatta su cinque compiti di
+natura diversa invece che su uno: i valori dichiarati erano circa il doppio più
+generosi del vero proprio nel verso in cui il router se ne serviva, e il verso
+stesso — meno effort, meno token — non regge sempre. Correggerla ha **abbassato**
+numeri già pubblicati, ed è il modo normale in cui questo progetto migliora.
 """
 
 from __future__ import annotations
@@ -176,21 +183,31 @@ ASSUNZIONI: list[Assunzione] = [
     ),
     Assunzione(
         nome="Effetto dell'effort sui token generati",
-        valore="low 0,4x - medium 0,7x - high 1,0x - xhigh 1,6x - max 2,6x",
-        fonte=DICHIARATA,
+        valore="low 0,75x - medium 0,94x - high 1,0x - xhigh 1,48x - max 2,22x",
+        fonte=VERIFICATA,
         dove="simulator.EFFORT_OUTPUT_MULTIPLIER",
         cosa_cambia=(
             "Tutto il risparmio attribuito all'abbassamento dell'effort, che è "
             "il primo livello del router e quello considerato sicuro. Il verso "
-            "è certo - meno effort, meno token di ragionamento - ma il rapporto "
-            "fra i livelli dipende dal compito. Senza un modello dichiarato il "
-            "simulatore darebbe sempre la stessa lunghezza e lo stadio "
-            "risulterebbe inutile **per costruzione**, che è il difetto peggiore "
-            "di tutti."
+            "sembrava certo — meno effort, meno token di ragionamento — e non "
+            "lo è: su una domanda fattuale corta l'effort alto genera **meno**, "
+            "perché non c'è ragionamento dove spenderlo."
         ),
         come_verificarla=(
-            "`--live` sullo stesso prompt ai cinque livelli, confrontando "
-            "`output_tokens`."
+            "`--live` ai cinque livelli su compiti di natura diversa, "
+            "confrontando `output_tokens`. Su un compito solo non si conclude: "
+            "ai livelli alti la dispersione è più larga della differenza fra i "
+            "livelli."
+        ),
+        esito_dal_vivo=(
+            "30 agosto 2026, claude-opus-5, cinque compiti × cinque livelli, "
+            "nessuna risposta troncata. Mediane osservate: low **0,75x** "
+            "(dichiarato 0,40), medium **0,94x** (0,70), xhigh **1,48x** "
+            "(1,60), max **2,22x** (2,60). Due conseguenze: abbassare l'effort "
+            "rende **meno della metà** di quanto il progetto assumeva, e "
+            "`medium` non è una leva di risparmio — 0,94, su un compito "
+            "esattamente 1,00. I valori dichiarati erano più generosi del vero "
+            "proprio nel verso in cui il router se ne serviva."
         ),
     ),
     Assunzione(

@@ -28,6 +28,15 @@ CAMPIONE_MINIMO = 20
 # Il merito misurato del gateway per ciascun regime, contro uno sviluppatore
 # che marca il proprio system prompt. Sono i numeri del README, e stanno qui
 # per essere citati accanto al consiglio invece che ricordati a memoria.
+#
+# **Da rifare, e questo modulo e' la prova del perche'.** Sono stati misurati
+# con il modello dell'effort corretto il 30 agosto 2026, che era circa il doppio
+# piu' generoso del vero: la stessa correzione ha abbassato di un quarto il
+# valore aggiunto del gateway nell'ablazione, e qui agira' nello stesso verso.
+# Che stiano scritti a mano in una costante invece di uscire da un comando e'
+# esattamente il motivo per cui sono invecchiati senza che nessuno se ne
+# accorgesse - e resta il difetto piu' grosso di questo file. Un numero che
+# nessun comando sa ricalcolare non e' una misura: e' una citazione.
 MERITO = {
     "agentico": "+52%",
     "ripetitivo": "+87,2%",
