@@ -1377,5 +1377,32 @@ TUNING_LOG: list[TuningEntry] = [
             "la misura non e' possibile, non un ripiego."
         ),
     ),
+    TuningEntry(
+        area="strumento",
+        title="`diagnosi` diceva OK su una credenziale lunga un carattere",
+        finding=(
+            "Alla prima chiave vera del progetto, l'incolla dentro `Read-Host "
+            "-AsSecureString` non e' passato - in molte console `Ctrl+V` li' non "
+            "funziona - e nella variabile e' finito **un solo carattere**. "
+            "`ecotokens diagnosi` ha risposto `OK Credenziali Anthropic da "
+            "ANTHROPIC_API_KEY`, perche' il controllo chiedeva se la variabile "
+            "esistesse, non se contenesse qualcosa di possibile."
+        ),
+        effect=(
+            "Aggiunto `_forma_sospetta`: bordi con spazi, virgolette di `setx` "
+            "finite dentro il valore, lunghezza sotto venti caratteri. Il limite "
+            "sta basso di proposito - distingue «non e' arrivato niente» da «non "
+            "conosco questo formato», e convalidare per davvero e' lavoro del "
+            "server. Due cose valgono oltre la correzione. La prima: il difetto "
+            "stava nel **comando che esiste per rendere rumorosi i guasti "
+            "silenziosi**, e ne aggiungeva uno - sarebbe riemerso come 401 alla "
+            "prima richiesta vera, cioe' esattamente lo scenario che il modulo "
+            "dichiara di prevenire. La seconda: un test usava `sk-ant-finta`, "
+            "dodici caratteri, e il controllo nuovo lo ha bocciato subito. Un "
+            "campione finto piu' corto del vero e' un metro piu' permissivo del "
+            "reale, ed e' la stessa forma di difetto del simulatore che "
+            "accettava cinque breakpoint."
+        ),
+    ),
 
 ]

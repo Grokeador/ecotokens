@@ -94,6 +94,37 @@ def _ambiente(d: Diagnosi) -> None:
     d.aggiungi("EcoTokens", OK, f"versione {__version__}")
 
 
+# Piu' corta di cosi' nessuna credenziale Anthropic puo' essere: il solo
+# prefisso `sk-ant-api03-` ne occupa tredici. Il limite sta basso di proposito -
+# serve a distinguere «non e' arrivato niente» da «non conosco questo formato»,
+# non a convalidare la chiave. Convalidarla e' un lavoro del server, e l'unico
+# modo onesto di farlo da qui e' `verifica --live`.
+_LUNGHEZZA_MINIMA = 20
+
+
+def _forma_sospetta(valore: str) -> str:
+    """Cosa non va nella *forma* della credenziale, senza leggerne il valore.
+
+    Trovato misurando, non ragionando: dopo un incolla fallito la variabile
+    conteneva **un carattere** e questo controllo diceva OK, perche' guardava
+    se la variabile esistesse. Un guasto silenzioso in piu' proprio nel comando
+    che esiste per renderli rumorosi - e sarebbe riemerso come 401 alla prima
+    richiesta vera, cioe' il difetto che il modulo dichiara di prevenire.
+
+    Restituisce una descrizione del difetto, o la stringa vuota se non c'e'
+    niente da dire. Non stampa mai il valore: la lunghezza compare solo quando
+    e' cosi' corta da non essere una credenziale.
+    """
+    if valore != valore.strip():
+        return "ha spazi o un a capo ai bordi"
+    if valore[0] in "\"'" or valore[-1] in "\"'":
+        return "e' racchiusa fra virgolette"
+    if len(valore) < _LUNGHEZZA_MINIMA:
+        quanti = "un carattere" if len(valore) == 1 else f"{len(valore)} caratteri"
+        return f"e' lunga {quanti}: l'incolla non e' passato"
+    return ""
+
+
 def _credenziali(d: Diagnosi, settings: Any) -> None:
     """Da dove arriva la chiave Anthropic. **Mai quale sia.**"""
     if settings.upstream.api_key:
@@ -114,6 +145,19 @@ def _credenziali(d: Diagnosi, settings: Any) -> None:
         if os.environ.get(nome)
     ]
     if fonti:
+        difetto = _forma_sospetta(os.environ[fonti[0]])
+        if difetto:
+            d.aggiungi(
+                "Credenziali Anthropic",
+                GRAVE,
+                f"da {', '.join(fonti)}, ma {difetto}",
+                "La variabile c'e', il suo contenuto no. Succede quando "
+                "l'incolla non passa (in molte console `Ctrl+V` non funziona "
+                "dentro `Read-Host`: serve il tasto destro) o quando le "
+                "virgolette di `setx` finiscono dentro il valore. Rifare il "
+                "passaggio e riaprire il terminale.",
+            )
+            return
         d.aggiungi("Credenziali Anthropic", OK, f"da {', '.join(fonti)}")
         return
 

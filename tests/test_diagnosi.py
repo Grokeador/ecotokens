@@ -53,11 +53,59 @@ def test_una_chiave_nel_file_di_configurazione_e_un_problema_grave(monkeypatch):
     assert "ANTHROPIC_API_KEY" in voce.rimedio
 
 
+CHIAVE_FINTA = "sk-ant-api03-finta-ma-lunga-come-una-vera"
+
+
 def test_la_chiave_nell_ambiente_va_bene_e_viene_riconosciuta(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-finta")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", CHIAVE_FINTA)
     voce = _voce(esegui(Settings()), "Credenziali Anthropic")
     assert voce.stato == OK
     assert "ANTHROPIC_API_KEY" in voce.dettaglio
+
+
+# --- la variabile c'e', il contenuto no ------------------------------------
+#
+# Non un caso di scuola: succede davvero. `Read-Host -AsSecureString` non
+# accetta `Ctrl+V` in molte console, e l'utente preme Invio su un campo dove
+# non e' entrato niente. La variabile viene creata lo stesso, e il controllo
+# precedente - "la variabile esiste?" - diceva OK su un carattere solo.
+
+
+@pytest.mark.parametrize(
+    "valore, atteso",
+    [
+        ("v", "un carattere"),
+        ("sk-ant", "6 caratteri"),
+        (f'"{CHIAVE_FINTA}"', "virgolette"),
+        (f"'{CHIAVE_FINTA}'", "virgolette"),
+        (f"{CHIAVE_FINTA}\n", "spazi"),
+        (f"  {CHIAVE_FINTA}", "spazi"),
+    ],
+)
+def test_una_credenziale_di_forma_impossibile_e_grave(monkeypatch, valore, atteso):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", valore)
+    voce = _voce(esegui(Settings()), "Credenziali Anthropic")
+    assert voce.stato == GRAVE, voce.dettaglio
+    assert atteso in voce.dettaglio
+    assert voce.rimedio
+
+
+def test_la_forma_sbagliata_non_fa_trapelare_il_valore(monkeypatch):
+    """Il controllo nuovo e' codice nuovo che tocca una credenziale: la
+    proprieta' del primo test deve reggere anche sul percorso di errore."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", f'"{CHIAVE_FINTA}"')
+    testo = " ".join(
+        f"{e.nome} {e.dettaglio} {e.rimedio}" for e in esegui(Settings()).esiti
+    )
+    assert CHIAVE_FINTA not in testo
+
+
+def test_non_si_pretende_di_conoscere_il_formato(monkeypatch):
+    """Il controllo distingue «non e' arrivato niente» da «non conosco questo
+    formato», e solo la prima e' un problema. Convalidare davvero una chiave e'
+    lavoro del server: da qui si puo' solo con `verifica --live`."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "un-formato-che-non-conosciamo-ma-lungo")
+    assert _voce(esegui(Settings()), "Credenziali Anthropic").stato == OK
 
 
 # --- ogni esito deve poter essere usato -----------------------------------
@@ -83,7 +131,7 @@ def test_ogni_esito_che_non_va_dice_cosa_fare():
 def test_il_codice_di_uscita_distingue_i_tre_casi(monkeypatch):
     """Serve a metterlo davanti a `serve` in uno script di avvio: senza tre
     valori distinti non si puo' decidere se fermarsi o solo annotare."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-finta")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", CHIAVE_FINTA)
 
     sano = Settings()
     sano.storage.path = "ecotokens.db"
