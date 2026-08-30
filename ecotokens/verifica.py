@@ -87,6 +87,54 @@ def _riempi(token_circa: int) -> str:
     return "misura di riferimento " * max(1, int(token_circa * 3.6 / 22))
 
 
+# Il testo del testimone e' **fisso**, e questa e' la parte che conta.
+#
+# La prima versione ci metteva davanti un uuid, per essere sicura di misurare
+# una scrittura nuova invece di una vecchia. Sembrava la scelta rigorosa ed era
+# quella sbagliata: un prefisso mai visto, scritto una volta e riletto subito,
+# e' il caso **meno** favorevole che esista, e su questo account riusciva circa
+# meta' delle volte. Il testimone bocciava quindi la misura due volte su
+# cinque - misurando il caso peggiore per decidere se si poteva misurare quello
+# normale, che e' l'errore piu' sottile della giornata perche' assomiglia al
+# rigore.
+#
+# Con un prefisso riusato, come lo riusa qualunque conversazione vera: **7
+# riletture su 7**. Un testo stabile rende il testimone deterministico e
+# rappresentativo insieme, e uno zero torna a significare qualcosa.
+_TESTO_TESTIMONE = "prefisso di controllo del testimone " * 500
+
+
+async def testimone_di_cache(client, modello: str) -> int:
+    """Manda due volte la stessa richiesta e riporta quanto ha riletto la seconda.
+
+    E' la cosa che **deve** funzionare, e serve prima di qualunque misura di
+    caching che duri piu' di una chiamata: senza, una misura eseguita mentre la
+    cache non rilegge dichiara che il gateway non serve a niente, e la
+    dichiarazione descrive il momento invece del gateway.
+
+    Sta qui e non in due posti perche' la usano `verifica` e `merito`, e due
+    definizioni di "la cache sta leggendo" possono divergere. Restituisce i
+    token riletti: zero significa **non misurare adesso**.
+    """
+    messaggi = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": _TESTO_TESTIMONE,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    ]
+    await client.messages.create(model=modello, max_tokens=16, messages=messaggi)
+    secondo = await client.messages.create(
+        model=modello, max_tokens=16, messages=messaggi
+    )
+    return _usage(secondo)["cache_read_input_tokens"]
+
+
 # --- i singoli controlli ---------------------------------------------------
 
 
@@ -406,14 +454,6 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
     def blocco(testo: str) -> list[dict[str, Any]]:
         return [{"type": "text", "text": testo}]
 
-    def con_marcatore(messaggio: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "role": "user",
-            "content": [
-                {**messaggio["content"][0], "cache_control": {"type": "ephemeral"}}
-            ],
-        }
-
     # Il testimone, e senza di lui questo controllo non vale niente.
     #
     # Misurato: c'e' stato un momento in cui la cache non rileggeva **nulla**,
@@ -424,14 +464,7 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
     #
     # Quindi prima si chiede una cosa che **deve** funzionare: la stessa
     # richiesta due volte. Se nemmeno quella rilegge, non si conclude niente.
-    apertura = [{"role": "user", "content": blocco(f"apertura: {corpo}")}]
-    await client.messages.create(
-        model=modello, max_tokens=16, messages=[con_marcatore(apertura[0])]
-    )
-    testimone = await client.messages.create(
-        model=modello, max_tokens=16, messages=[con_marcatore(apertura[0])]
-    )
-    if _usage(testimone)["cache_read_input_tokens"] <= 0:
+    if await testimone_di_cache(client, modello) <= 0:
         return Controllo(
             assunzione="Il prefisso di conversazione regge fra i turni",
             atteso="le riletture crescono a ogni turno",
@@ -489,10 +522,11 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
     #
     # Quindi si richiede la stessa prova alla fine. Se una delle due cade, la
     # finestra non era buona e non si conclude niente.
-    chiusura = await client.messages.create(
-        model=modello, max_tokens=16, messages=[con_marcatore(apertura[0])]
-    )
-    if _usage(chiusura)["cache_read_input_tokens"] <= 0:
+    # Una sonda nuova, non la ripetizione di quella d'apertura: la domanda e'
+    # «la cache sta leggendo **adesso**», e un prefisso scritto tre turni fa
+    # risponderebbe anche a «e' ancora in vita quella voce», che e' un'altra
+    # cosa e puo' fallire per conto suo.
+    if await testimone_di_cache(client, modello) <= 0:
         return Controllo(
             assunzione="Il prefisso di conversazione regge fra i turni",
             atteso="riletture > 0 dal secondo turno, e in crescita",
@@ -506,7 +540,7 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
                 "sono cambiate **mentre** si misurava. Le riletture qui sopra "
                 "non dicono niente sul prefisso."
             ),
-            chiamate=6,
+            chiamate=7,
         )
 
     # Due domande distinte, e tenerle separate cambia la conclusione. La prima
@@ -538,7 +572,7 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
             "primo messaggio e si riscrive la coda a ogni turno. Il risparmio "
             "esiste ed e' piu' piccolo di quello assunto."
         ),
-        chiamate=6,
+        chiamate=7,
     )
 
 
@@ -553,7 +587,7 @@ CONTROLLI = (
 
 # Quante chiamate costa l'intera verifica. Dichiarato prima di eseguirla:
 # un comando che spende deve dire quanto prima di spendere.
-CHIAMATE_PREVISTE = 15
+CHIAMATE_PREVISTE = 16
 
 
 async def verifica(client, modello: str, *, circolare: bool = False) -> Rapporto:

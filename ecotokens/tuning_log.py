@@ -1604,5 +1604,87 @@ TUNING_LOG: list[TuningEntry] = [
             "le leghi sarebbero libere di divergere di nuovo."
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="Tre spiegazioni sbagliate di seguito, e la quarta era la mia sonda",
+        finding=(
+            "Cercando di misurare `merito --live` il testimone diceva zero, poi "
+            "4608, poi di nuovo zero nel giro di un minuto. Sono seguite due "
+            "spiegazioni, **entrambe sbagliate**, ed erano sbagliate allo stesso "
+            "modo: costruite su due campioni per parte.\n\n"
+            "La prima: «dipende da dove sta il marcatore» - `system` non "
+            "rileggeva e `messages` si'. La seconda: «e' una corsa fra la "
+            "scrittura e la rilettura», da 2/3 senza pausa contro 3/3 con "
+            "cinque secondi. Portati a sei campioni per parte, la pausa da' "
+            "**3/6 contro 3/6**: nessuna differenza. Sommando le diciotto "
+            "sonde della giornata, la rilettura di un prefisso appena scritto "
+            "riesce **11 volte su 18**."
+        ),
+        effect=(
+            "Seguirono altre due spiegazioni, e anche quelle cadute: una "
+            "strozzatura sulle scritture ravvicinate (la raffica fece **3/8** e "
+            "il ritmo lento **1/8**, cioe' il contrario) e la dimensione del "
+            "prefisso (4/8 contro 4/8). Quarantadue sonde, quattro ipotesi, "
+            "nessuna che spiegasse niente.\n\n"
+            "Il difetto era nella sonda, e stava in bella vista dall'inizio: "
+            "**ogni prova usava un prefisso nuovo di zecca, scritto una volta e "
+            "riletto una volta.** E' il caso meno favorevole che esista, e non "
+            "e' come si comporta nessun traffico vero. Riprovato con un solo "
+            "prefisso riusato - come lo riusa qualunque conversazione - la "
+            "rilettura riesce **7 volte su 7**, cioe' e' deterministica. La "
+            "moneta al 57% non descriveva il caching: descriveva come lo stavo "
+            "interrogando.\n\n"
+            "Il testimone aveva lo stesso difetto - ci metteva davanti un uuid "
+            "per essere sicuro di misurare una scrittura nuova - e quindi "
+            "misurava il caso peggiore per decidere se si poteva misurare "
+            "quello normale, bloccando tre misure buone di fila. E' l'errore "
+            "piu' sottile della giornata perche' **assomiglia al rigore**: la "
+            "scelta che sembrava piu' severa era quella non rappresentativa. "
+            "Ora il testo del testimone e' fisso."
+        ),
+    ),
+    TuningEntry(
+        area="strumento",
+        title="La guardia che si rifiuta di spendere ha gia' pagato il proprio costo",
+        finding=(
+            "`merito --live` sui cinque carichi fa sessanta richieste con prompt "
+            "agentici che crescono fino a decine di migliaia di token: qualche "
+            "dollaro. In una finestra in cui la cache non rilegge, quelle "
+            "sessanta richieste concluderebbero che il gateway non serve a "
+            "niente - descrivendo il momento invece del gateway."
+        ),
+        effect=(
+            "Due chiamate di testimone prima di cominciare, e se non rilegge il "
+            "comando **non parte** e lo dice. Al primo giro dal vivo ha fermato "
+            "la spesa un minuto dopo che una sonda a mano leggeva 2821: ha gia' "
+            "guadagnato piu' di quanto costa, e ha reso indipendente da chi "
+            "lancia il comando una prudenza che fino a un'ora prima dipendeva "
+            "da chi si ricordava di averla."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Il numero di testa, misurato sull'API vera: +76,0% dove il simulatore diceva +52,3%",
+        finding=(
+            "`ecotokens merito --live` sul carico agentico, 21 richieste "
+            "vere su claude-opus-5. Contro uno sviluppatore che marca il "
+            "proprio system prompt: **+76,0%**, dove la stessa misura sul "
+            "simulatore da' +52,3%. La colonna centrale - lo sconto che "
+            "Anthropic regala a chiunque - combacia invece quasi esattamente: "
+            "2,9% dal vivo contro 2,1% simulato."
+        ),
+        effect=(
+            "E' la prima volta che l'affermazione centrale del progetto ha "
+            "sotto una misura non simulata, e il simulatore **sottostimava**. "
+            "La spiegazione piu' probabile e' una sua limitazione gia' "
+            "dichiarata: conta i token in proporzione alla lunghezza del testo "
+            "invece di usare il tokenizer vero. Il verso dell'errore e' quello "
+            "giusto - per mesi il numero pubblicato e' stato piu' basso del "
+            "reale - ma resta un errore del 45% in relativo, e vale la pena "
+            "ricordarlo prima di fidarsi di qualunque altra cifra simulata. "
+            "Un carico, un modello, una esecuzione: le altre quattro righe "
+            "costano qualche dollaro l'una e restano simulate."
+        ),
+    ),
 
 ]

@@ -203,6 +203,11 @@ def merito(
     live: bool = typer.Option(
         False, "--live", help="Usa l'API vera invece del simulatore (spende)"
     ),
+    carico: Optional[str] = typer.Option(
+        None,
+        "--carico",
+        help="Limita a un carico (sottostringa dell'etichetta). Con --live conviene.",
+    ),
 ) -> None:
     """Quanto aggiunge il gateway a chi la cache se la mette gia' da solo.
 
@@ -219,7 +224,20 @@ def merito(
     """
     from .merito import calcola
 
-    rapporto = asyncio.run(calcola(live=live))
+    rapporto = asyncio.run(calcola(live=live, solo=carico))
+
+    if not rapporto.eseguita:
+        console.print(
+            "\n[yellow]Misura non eseguita:[/] in questo momento la cache non "
+            "rilegge nemmeno una richiesta identica ripetuta."
+        )
+        console.print(
+            "[dim]La rilettura su un account vero va e viene nell'arco di "
+            "minuti. Misurare adesso costerebbe qualche dollaro per concludere "
+            "che il gateway non serve, e la conclusione descriverebbe il "
+            "momento invece del gateway. Riprovare fra qualche minuto.[/]"
+        )
+        raise typer.Exit(code=1)
 
     tabella = Table(
         title="Quanto aggiunge EcoTokens a chi marca il proprio system prompt"

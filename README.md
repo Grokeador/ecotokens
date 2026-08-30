@@ -753,6 +753,27 @@ invecchia male: invecchia invisibile.
 | una conversazione che cresce, 8 turni | 58,1% | 57,7% | **+1,1%** | +22,6% |
 | molti utenti, stesso system, turno singolo | 51,6% | 51,7% | **−0,1%** | −0,2% |
 
+#### Il primo numero che non viene dal simulatore
+
+Il 30 agosto 2026 la riga di testa è stata misurata **contro `api.anthropic.com`**
+(`ecotokens merito --live --carico "20 turni"`, 21 richieste vere):
+
+| | simulato | dal vivo |
+|---|---:|---:|
+| totale vs nessuna cache | 53,3% | **76,7%** |
+| di cui Anthropic | 2,1% | 2,9% |
+| **di cui EcoTokens** | **+52,3%** | **+76,0%** |
+
+Non solo regge: il simulatore **sottostimava**. La spiegazione più probabile
+sta in una sua limitazione già dichiarata — conta i token in proporzione alla
+lunghezza del testo invece di usare il tokenizer vero — e il verso dell'errore
+è quello giusto per l'onestà del progetto: per mesi il numero pubblicato è
+stato più basso del reale, non più alto.
+
+Vale per **un carico, un modello, una esecuzione**. Le altre quattro righe
+restano simulate: costano qualche dollaro l'una a misurarle, e il comando è lì
+per chi vuole farlo.
+
 La colonna «prima» è quella che il README ha portato per mesi. La riga di testa
 regge — ed è quella che descrive un assistente di sviluppo. **Il +22,6% sulla
 chat no: era +22,6% e ora è +1,1%**, e guardando la colonna centrale si capisce

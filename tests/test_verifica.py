@@ -256,12 +256,13 @@ async def test_una_rilettura_ferma_e_una_tenuta_debole_non_una_smentita():
 
     client = _ClientFinto(
         [
-            _Risposta(scritti=5000),
-            _Risposta(riletti=2809),   # testimone d'apertura
+            _Risposta(scritti=5000),   # testimone d'apertura: scrive
+            _Risposta(riletti=2809),   # testimone d'apertura: rilegge
             _Risposta(riletti=0),      # turno 0
             _Risposta(riletti=2809),   # turno 1
             _Risposta(riletti=2809),   # turno 2
-            _Risposta(riletti=2809),   # testimone di chiusura
+            _Risposta(scritti=5000),   # testimone di chiusura: scrive
+            _Risposta(riletti=2809),   # testimone di chiusura: rilegge
         ]
     )
     controllo = await _ciclo_agentico(client, "claude-opus-5")
@@ -275,11 +276,12 @@ async def test_se_il_prefisso_non_regge_e_una_smentita_vera():
 
     client = _ClientFinto(
         [
-            _Risposta(scritti=5000),
-            _Risposta(riletti=2809),   # testimone d'apertura
+            _Risposta(scritti=5000),   # testimone d'apertura: scrive
+            _Risposta(riletti=2809),   # testimone d'apertura: rilegge
             _Risposta(riletti=0),      # turno 0
             _Risposta(riletti=0),      # turno 1
             _Risposta(riletti=0),      # turno 2
+            _Risposta(scritti=5000),   # testimone di chiusura: scrive
             _Risposta(riletti=2809),   # testimone di chiusura: regge
         ]
     )
@@ -297,11 +299,12 @@ async def test_il_ciclo_agentico_si_ferma_se_la_cache_smette_durante_la_misura()
 
     client = _ClientFinto(
         [
-            _Risposta(scritti=5000),   # apertura: scrive
+            _Risposta(scritti=5000),   # testimone d'apertura: scrive
             _Risposta(riletti=2809),   # testimone d'apertura: valido
             _Risposta(riletti=0),      # turno 0
             _Risposta(riletti=0),      # turno 1
             _Risposta(riletti=0),      # turno 2
+            _Risposta(scritti=5000),   # testimone di chiusura: scrive
             _Risposta(riletti=0),      # testimone di chiusura: caduto
         ]
     )

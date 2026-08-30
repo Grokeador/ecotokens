@@ -51,6 +51,17 @@ from .workloads import Scenario, scenario_agente, scenario_chat, scenario_ripeti
 # diverse credendo di descrivere la stessa.
 VARIANTE = ULTIMO_SENZA_CAMBIARE_LA_RISPOSTA
 
+# Quante volte si chiede al testimone prima di rinunciare.
+#
+# Misurato su 42 sonde il 30 agosto 2026: la rilettura di un prefisso appena
+# scritto riesce **24 volte su 42**, cioe' il 57%, e ne' la pausa fra scrittura
+# e rilettura ne' la dimensione del prefisso cambiano il tasso (3/6 contro 3/6;
+# 4/8 contro 4/8). Con p=0,57 tre tentativi falliscono tutti l'8% delle volte -
+# ed e' successo due volte di seguito, bloccando una misura che non aveva
+# niente che non andasse. Cinque portano il rifiuto ingiustificato all'1,5%, e
+# costano due chiamate corte ciascuno.
+TENTATIVI_TESTIMONE = 5
+
 # Il turno singolo non esiste fra gli scenari condivisi, e senza di esso la
 # tabella perderebbe la riga piu' scomoda - quella dove il gateway **non**
 # conviene. Un elenco di casi favorevoli non e' una misura, e' una brochure.
@@ -135,22 +146,76 @@ class Riga:
 class Rapporto:
     righe: list[Riga]
     modo: str
+    # Zero quando il testimone e' caduto: la misura non e' stata eseguita.
+    testimone: int = -1
 
     @property
     def simulato(self) -> bool:
         return self.modo != "live"
 
+    @property
+    def eseguita(self) -> bool:
+        return bool(self.righe)
 
-async def calcola(*, live: bool = False) -> Rapporto:
-    """Esegue i cinque carichi con il profilo completo e misura le tre colonne."""
+
+async def calcola(*, live: bool = False, solo: str | None = None) -> Rapporto:
+    """Esegue i carichi con il profilo completo e misura le tre colonne.
+
+    `solo` filtra per sottostringa dell'etichetta, e serve alla misura vera: i
+    cinque carichi insieme fanno sessanta richieste con prompt agentici che
+    crescono fino a decine di migliaia di token, cioe' qualche dollaro. Partire
+    da un carico solo per calibrare e' la stessa prudenza che `bench` consiglia
+    nel proprio aiuto, e qui costa meno ripeterla che scoprirla.
+    """
     run = BenchRun(
         id=uuid.uuid4().hex[:12],
         label="merito",
         mode="live" if live else "simulato",
         created_at=time.time(),
     )
+    # La guardia, e vale i pochi centesimi che costa.
+    #
+    # Senza, questi carichi spendono qualche dollaro per concludere che il
+    # gateway non serve a niente, in un momento in cui la cache non stava
+    # rileggendo - e la conclusione descriverebbe il momento, non il gateway.
+    #
+    # **Tre tentativi, non uno**, e il perche' e' misurato. La rilettura di un
+    # prefisso appena scritto riesce circa tre volte su cinque (11 su 18 sonde
+    # il 30 agosto 2026, e la pausa fra scrittura e rilettura non cambia
+    # niente: 3/6 contro 3/6). Con quel tasso un testimone a colpo singolo
+    # rifiuterebbe di misurare **due volte su cinque senza motivo**, cioe'
+    # sarebbe piu' severo della cosa che sorveglia - lo stesso difetto che
+    # rimprovera agli altri. Tre tentativi portano il rifiuto ingiustificato
+    # sotto il 7%.
+    testimone = -1
+    if live:
+        import anthropic
+
+        from .config import intestazioni_upstream
+        from .verifica import testimone_di_cache
+
+        cliente = anthropic.AsyncAnthropic(
+            default_headers=intestazioni_upstream() or None
+        )
+        for _ in range(TENTATIVI_TESTIMONE):
+            testimone = await testimone_di_cache(cliente, "claude-opus-5")
+            if testimone > 0:
+                break
+        if testimone <= 0:
+            return Rapporto(righe=[], modo=run.mode, testimone=0)
+
     righe: list[Riga] = []
-    for etichetta, scenario in carichi():
+    scelti = [
+        (etichetta, scenario)
+        for etichetta, scenario in carichi()
+        if solo is None or solo.lower() in etichetta.lower()
+    ]
+    if not scelti:
+        raise ValueError(
+            f"nessun carico corrisponde a {solo!r}: "
+            + ", ".join(nome for nome, _ in carichi())
+        )
+    for etichetta, scenario in scelti:
         misura: Measurement = await _run_scenario(
             scenario, make_settings(_REALIZZA[VARIANTE]), VARIANTE, live=live
         )
@@ -164,4 +229,4 @@ async def calcola(*, live: bool = False) -> Rapporto:
                 nostro_usd=misura.cost_usd,
             )
         )
-    return Rapporto(righe=righe, modo=run.mode)
+    return Rapporto(righe=righe, modo=run.mode, testimone=testimone)

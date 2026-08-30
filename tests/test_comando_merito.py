@@ -170,3 +170,71 @@ def test_i_valori_citati_altrove_combaciano_col_README():
             f"{chiave}: `consiglia.MERITO` dice {MERITO[chiave]}, il README no. "
             "Rieseguire `ecotokens merito` e allineare entrambi."
         )
+
+
+async def test_dal_vivo_non_si_spende_se_la_cache_non_rilegge(monkeypatch):
+    """La guardia che vale i due centesimi che costa.
+
+    La rilettura su un account vero va e viene nell'arco di minuti. In una
+    finestra morta questi carichi spenderebbero qualche dollaro per concludere
+    che il gateway non serve, e la conclusione descriverebbe il momento invece
+    del gateway. Il primo giro dal vivo e' stato fermato cosi', a mano: questo
+    test e' la stessa prudenza, ma che non dipende da chi lancia il comando.
+    """
+    import ecotokens.verifica as modulo_verifica
+
+    async def cache_ferma(client, modello, **kwargs):
+        return 0
+
+    monkeypatch.setattr(modulo_verifica, "testimone_di_cache", cache_ferma)
+    monkeypatch.setattr(
+        "anthropic.AsyncAnthropic", lambda **kwargs: object(), raising=True
+    )
+
+    rapporto = await calcola(live=True)
+    assert rapporto.eseguita is False
+    assert rapporto.testimone == 0
+    assert rapporto.righe == [], "non deve aver eseguito nessun carico"
+
+
+async def test_il_testimone_non_si_arrende_al_primo_zero(monkeypatch):
+    """Uno solo sarebbe piu' severo della misura che protegge.
+
+    La rilettura di un prefisso nuovo riesce circa tre volte su cinque: un
+    testimone a colpo singolo rifiuterebbe di misurare due volte su cinque
+    senza che ci sia niente che non va. E' lo stesso difetto - un controllo
+    tarato male che blocca il lavoro buono - che questo progetto rimprovera
+    agli strumenti troppo permissivi, preso dal lato opposto.
+    """
+    import ecotokens.verifica as modulo_verifica
+    from ecotokens.merito import TENTATIVI_TESTIMONE
+
+    # Quattro zeri e poi una rilettura: il testimone deve arrivarci.
+    esiti = iter([0, 0, 0, 0, 2800])
+    chiamate = []
+
+    async def a_singhiozzo(client, modello, **kwargs):
+        valore = next(esiti)
+        chiamate.append(valore)
+        return valore
+
+    async def niente_api(scenario, settings, variante, *, live, **kwargs):
+        from ecotokens.bench import Measurement
+
+        return Measurement(
+            scenario=scenario.name,
+            variant=variante,
+            requests=1,
+            cost_usd=1.0,
+            baseline_piena_usd=3.0,
+            baseline_ingenua_usd=2.0,
+        )
+
+    monkeypatch.setattr(modulo_verifica, "testimone_di_cache", a_singhiozzo)
+    monkeypatch.setattr("anthropic.AsyncAnthropic", lambda **kwargs: object())
+    monkeypatch.setattr("ecotokens.merito._run_scenario", niente_api)
+
+    rapporto = await calcola(live=True, solo="turno singolo")
+    assert len(chiamate) == TENTATIVI_TESTIMONE == 5
+    assert rapporto.testimone == 2800
+    assert rapporto.eseguita is True
