@@ -215,6 +215,31 @@ async def _effetto_effort(client, modello: str) -> Controllo:
     )
 
 
+def _quattrocento_estraneo(errore: Exception, *parole: str) -> str:
+    """Un 400 non conferma niente da solo: dipende da **quale** 400.
+
+    Trovato al primo contatto con l'API vera. La chiave era legata a
+    un'identita', e l'API rispondeva `400 anthropic-workspace-id is required` a
+    qualunque richiesta - compresa quella che chiedeva se `temperature` fosse
+    rifiutato, e quella che chiedeva se il quinto breakpoint fosse rifiutato.
+    Tutti e due i controlli concludevano su `except BadRequestError`, e hanno
+    dichiarato **confermate** due assunzioni che non avevano nemmeno sfiorato.
+
+    Un controllo che passa per la ragione sbagliata e' peggio di uno che
+    fallisce: quello rumoroso si corregge, questo si crede. Ed e' il difetto
+    piu' caro che questo progetto possa avere, perche' sta nel modulo che
+    esiste per dire quali assunzioni reggono.
+
+    Restituisce il messaggio se il 400 non parla di cio' che e' stato chiesto,
+    la stringa vuota se e' quello atteso.
+    """
+    testo = str(errore)
+    minuscolo = testo.lower()
+    if any(parola.lower() in minuscolo for parola in parole):
+        return ""
+    return testo
+
+
 async def _parametri_rifiutati(client, modello: str) -> Controllo:
     """Se non fossero rifiutati, il gateway starebbe scartando parametri utili."""
     import anthropic
@@ -235,6 +260,19 @@ async def _parametri_rifiutati(client, modello: str) -> Controllo:
         rifiutato = False
         dettaglio = "accettato"
     except anthropic.BadRequestError as errore:
+        estraneo = _quattrocento_estraneo(errore, "temperature")
+        if estraneo:
+            return Controllo(
+                assunzione="I parametri rimossi danno 400",
+                atteso="400 su `temperature`",
+                osservato=f"400 di altra natura: {estraneo[:110]}",
+                esito=INDETERMINATO,
+                nota=(
+                    "Il 400 c'e' ma non parla di `temperature`: non conferma "
+                    "niente. Va tolta la causa vera e rifatto il controllo."
+                ),
+                chiamate=1,
+            )
         rifiutato = True
         dettaglio = f"400: {str(errore)[:80]}"
     except Exception as errore:  # un altro errore non risponde alla domanda
@@ -282,7 +320,20 @@ async def _troppi_breakpoint(client, modello: str) -> Controllo:
         )
         rifiutato = False
         dettaglio = "cinque breakpoint accettati"
-    except anthropic.BadRequestError:
+    except anthropic.BadRequestError as errore:
+        estraneo = _quattrocento_estraneo(errore, "cache_control", "cache control")
+        if estraneo:
+            return Controllo(
+                assunzione="Quattro breakpoint al massimo",
+                atteso="400 al quinto",
+                osservato=f"400 di altra natura: {estraneo[:110]}",
+                esito=INDETERMINATO,
+                nota=(
+                    "Il 400 c'e' ma non parla di `cache_control`: il quinto "
+                    "breakpoint non e' stato messo alla prova."
+                ),
+                chiamate=1,
+            )
         rifiutato = True
         dettaglio = "400 sul quinto breakpoint"
     except Exception as errore:

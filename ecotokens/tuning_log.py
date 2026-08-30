@@ -1404,5 +1404,50 @@ TUNING_LOG: list[TuningEntry] = [
             "accettava cinque breakpoint."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Con una chiave legata a un'identita' il gateway prendeva 400 su tutto",
+        finding=(
+            "Primo contatto con l'API vera, dopo mesi di misure sul simulatore. "
+            "La chiave creata dalla propria utenza su `platform.claude.com` e' "
+            "**identity-linked** e l'API pretende l'header "
+            "`anthropic-workspace-id`: senza, risponde 400 a qualunque "
+            "richiesta. Il gateway non lo mandava. Non un caso di nicchia - e' "
+            "cio' che si ottiene creando una chiave nel modo piu' ovvio."
+        ),
+        effect=(
+            "`intestazioni_upstream()` in `config.py`, letta da `[upstream] "
+            "workspace_id` o da `ANTHROPIC_WORKSPACE_ID`, applicata dove si "
+            "costruisce un client vero. Vale la pena notare **quanto tardi** e' "
+            "arrivata questa scoperta: nessun test poteva trovarla, perche' il "
+            "simulatore non chiede l'header che non conosce. Il simulatore "
+            "risponde alla domanda per cui e' stato scritto e tace su tutte le "
+            "altre - ed e' la ragione per cui `verifica --live` esiste e si "
+            "rifiuta di girare contro di lui."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Due assunzioni dichiarate confermate da un 400 che parlava d'altro",
+        finding=(
+            "Nella stessa esecuzione, `verifica --live` ha risposto `OK` a «I "
+            "parametri rimossi danno 400» e a «Quattro breakpoint al massimo». "
+            "Nessuna delle due era stata messa alla prova: entrambi i controlli "
+            "concludevano su `except BadRequestError`, e il 400 ricevuto era "
+            "quello sul workspace. Lo strumento che esiste per dire quali "
+            "assunzioni reggono ne ha certificate due che non aveva sfiorato."
+        ),
+        effect=(
+            "`_quattrocento_estraneo` confronta il messaggio con cio' che il "
+            "controllo ha chiesto; se non combacia l'esito e' INDETERMINATO. "
+            "Rifatta la misura, il verdetto e' passato da **2 su 6 combaciano** "
+            "a **0 su 6, 6 indeterminate** - cioe' dalla risposta sbagliata a "
+            "«non lo so», che e' quella vera. E' il difetto piu' caro che questo "
+            "progetto possa avere: un controllo che fallisce si corregge, uno "
+            "che passa per la ragione sbagliata si crede. Vale anche in "
+            "generale, e non solo qui: **asserire su un codice di errore invece "
+            "che sulla sua causa e' un test che passa da solo.**"
+        ),
+    ),
 
 ]

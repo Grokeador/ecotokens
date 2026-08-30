@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import __version__
 from .api.schemas import ChatCompletionRequest, error_payload
-from .config import Settings, load_settings
+from .config import Settings, intestazioni_upstream, load_settings
 from .pipeline.base import FORMAT_ANTHROPIC, Pipeline, RequestContext
 from .pipeline.budget import BudgetStage
 from .pipeline.cache_planner import CachePlannerStage
@@ -60,6 +60,9 @@ class Gateway:
             kwargs["api_key"] = settings.upstream.api_key
         if settings.upstream.base_url:
             kwargs["base_url"] = settings.upstream.base_url
+        intestazioni = intestazioni_upstream(settings.upstream)
+        if intestazioni:
+            kwargs["default_headers"] = intestazioni
         return anthropic.AsyncAnthropic(**kwargs)
 
     @staticmethod

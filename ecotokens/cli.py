@@ -12,7 +12,7 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
-from .config import load_settings
+from .config import intestazioni_upstream, load_settings
 from .store.db import Database
 from .store.repos import Store
 
@@ -359,7 +359,12 @@ def verifica(
         import anthropic
 
         if live:
-            return await esegui_verifica(anthropic.AsyncAnthropic(), modello)
+            return await esegui_verifica(
+                anthropic.AsyncAnthropic(
+                    default_headers=intestazioni_upstream() or None
+                ),
+                modello,
+            )
 
         import httpx2
 
@@ -1146,7 +1151,9 @@ def substitutions(
 
                 from .pricing import resolve_model
 
-                client = anthropic.AsyncAnthropic()
+                client = anthropic.AsyncAnthropic(
+                    default_headers=intestazioni_upstream() or None
+                )
                 bersaglio = resolve_model(model)
                 for voce in SUBSTITUTIONS:
                     prima = await _conta(client, bersaglio, voce.source)

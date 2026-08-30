@@ -49,6 +49,14 @@ log_level = "info"
 # `ant auth login`. Metterla in un file di configurazione e' il modo piu'
 # facile per pubblicarla per sbaglio su GitHub.
 # api_key = "sk-ant-..."
+#
+# Serve invece se la chiave e' legata alla tua utenza ("identity-linked"),
+# cioe' se l'hai creata dalla tua pagina personale su platform.claude.com:
+# quelle chiavi devono dire in quale workspace agiscono, e senza l'API
+# risponde 400 a tutto. Non e' un segreto - e si puo' mettere anche
+# nell'ambiente, come ANTHROPIC_WORKSPACE_ID. Le chiavi create dentro un
+# workspace non ne hanno bisogno: lascia la riga commentata.
+# workspace_id = "wrkspc_..."
 default_model = "claude-opus-5"
 default_effort = "high"
 default_max_tokens = 16000

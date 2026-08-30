@@ -43,6 +43,16 @@ class UpstreamSettings(BaseModel):
     # Lasciare vuoto: l'SDK risolve da solo ANTHROPIC_API_KEY,
     # ANTHROPIC_AUTH_TOKEN o un profilo creato con `ant auth login`.
     api_key: str | None = None
+    # Le chiavi legate a un'identita' (`platform.claude.com` -> Settings ->
+    # Keys) esigono di sapere **in quale workspace** la richiesta agisce, e
+    # senza quell'header l'API risponde 400 a tutto. Non e' un caso di nicchia:
+    # e' cio' che si ottiene creando una chiave dalla propria utenza, ed e' il
+    # primo modo in cui questo gateway si e' rotto contro l'API vera. Le chiavi
+    # di workspace non ne hanno bisogno, quindi il valore resta vuoto e
+    # l'header non viene mandato. Si puo' anche passare da
+    # ANTHROPIC_WORKSPACE_ID, che e' il posto giusto: e' una configurazione
+    # dell'ambiente, non un segreto ma nemmeno una scelta del prodotto.
+    workspace_id: str | None = None
     base_url: str | None = None
     timeout_seconds: float = 600.0
     max_retries: int = 2
@@ -618,6 +628,25 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
             if not (isinstance(annotazione, type) and issubclass(annotazione, BaseModel)):
                 data[campo] = value
     return data
+
+
+def intestazioni_upstream(upstream: UpstreamSettings | None = None) -> dict[str, str]:
+    """Gli header da mandare all'API oltre a quelli dell'SDK.
+
+    Oggi ce n'e' uno solo, e serve a non essere rotti: una chiave legata a
+    un'identita' pretende `anthropic-workspace-id`, e senza quello l'API
+    risponde 400 a **ogni** richiesta. Sta qui e non dentro `Gateway` perche'
+    lo usano anche `verifica`, `substitutions` e chiunque apra un client vero:
+    quattro costruzioni separate dello stesso client sono quattro occasioni di
+    dimenticarlo in tre posti su quattro.
+
+    La configurazione vince sull'ambiente, come per tutto il resto.
+    """
+    valore = (upstream.workspace_id if upstream else None) or os.environ.get(
+        "ANTHROPIC_WORKSPACE_ID"
+    )
+    valore = (valore or "").strip()
+    return {"anthropic-workspace-id": valore} if valore else {}
 
 
 def load_settings(path: str | Path | None = None) -> Settings:
