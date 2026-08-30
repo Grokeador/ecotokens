@@ -298,6 +298,10 @@ def assunzioni() -> None:
         console.print(f"  {voce.valore}   [dim]({voce.dove})[/]")
         console.print(f"  [dim]Se fosse sbagliata:[/] {voce.cosa_cambia}")
         console.print(f"  [dim]Come verificarla:[/] {voce.come_verificarla}")
+        # Sta dopo, e non al posto di "come verificarla": la ricetta serve
+        # ancora, perche' una verifica di agosto non vale per sempre.
+        if voce.esito_dal_vivo:
+            console.print(f"  [green]Dal vivo:[/] {voce.esito_dal_vivo}")
 
     console.print()
     console.print(f"[bold]{riepilogo()}[/]")

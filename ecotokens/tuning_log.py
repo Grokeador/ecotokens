@@ -1449,5 +1449,58 @@ TUNING_LOG: list[TuningEntry] = [
             "che sulla sua causa e' un test che passa da solo.**"
         ),
     ),
+    TuningEntry(
+        area="misura",
+        title="L'effort non sembrava cambiare niente: erano due risposte tagliate al tetto",
+        finding=(
+            "Prima verifica dal vivo riuscita: `low 1.00x, high 1.00x, max "
+            "1.00x`, e il controllo ha concluso che abbassare l'effort non "
+            "riduce i token generati - cioe' che il primo livello del router "
+            "non risparmia. Guardando `stop_reason`: `low` 3940 token e "
+            "`end_turn`, `high` **4096** e `max_tokens`, `max` **4096** e "
+            "`max_tokens`. Le due risposte alte erano identiche perche' erano "
+            "state **tagliate allo stesso tetto**, non perche' l'effort non "
+            "faccia niente. Il rapporto 1,00x misurava `max_tokens=4096`."
+        ),
+        effect=(
+            "Tetto alzato a 16.000 e, soprattutto, esito INDETERMINATO se anche "
+            "una sola risposta si ferma su `max_tokens`: alzare il limite non "
+            "basta, perche' puo' saturare comunque. Nota che il verso che il "
+            "controllo cercava era in parte visibile - `low` **ha** generato "
+            "meno, e ha finito da solo - e la conclusione l'ha ignorato. Una "
+            "misura satura non e' una misura: confrontare due valori entrambi "
+            "al tetto misura il tetto."
+        ),
+    ),
+    TuningEntry(
+        area="misura",
+        title="Ho quasi cancellato il +52% per una condizione che cambiava sotto le mani",
+        finding=(
+            "Nella stessa esecuzione, `_ciclo_agentico` ha dato `riletture: 0, "
+            "0, 0` - la smentita dell'assunzione su cui poggia il numero piu' "
+            "alto del progetto, con la nota che dice di togliere quel numero "
+            "dal README prima di ogni altra cosa. Sono seguite otto sonde: "
+            "dimensione del corpo, ritardo di propagazione, breakpoint stabile "
+            "contro breakpoint mobile, alternanza dei ruoli, ripetizione "
+            "identica prima dell'estensione. Una di esse ha mostrato che il "
+            "prefisso esteso **rilegge** benissimo (2829 riletti, 13 scritti). "
+            "L'ultima ha mostrato che nemmeno la richiesta identica ripetuta "
+            "rileggeva piu' - il caso che aveva funzionato dieci minuti prima."
+        ),
+        effect=(
+            "La variabile non era la forma della richiesta: era il tempo. Stavo "
+            "attribuendo a otto forme diverse una differenza che cambiava da "
+            "sola, ed e' la forma di errore piu' costosa possibile qui, perche' "
+            "la conclusione sarebbe stata cancellare una cifra pubblicata. "
+            "Aggiunto un **testimone**: prima di misurare la tenuta del "
+            "prefisso, il controllo manda due volte la stessa richiesta; se "
+            "nemmeno quella rilegge, l'esito e' INDETERMINATO e non DIVERGE. "
+            "Separata anche la condizione di successo in due: che il prefisso "
+            "**regga** e che la rilettura **cresca**. Osservato una volta 2809 "
+            "e poi ancora 2809 - regge senza crescere, che e' una tenuta piu' "
+            "debole di quella assunta e un'informazione diversa da una "
+            "smentita, mentre la vecchia condizione unica le confondeva."
+        ),
+    ),
 
 ]

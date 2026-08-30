@@ -170,3 +170,117 @@ def test_la_sanificazione_regge_davanti_a_un_simulatore_severo(client):
     )
     assert risposta.status_code == 200, risposta.text
     assert not (set(client.stub.last) & {"temperature", "top_p", "frequency_penalty"})
+
+
+# --- un controllo deve sapere quando non puo' concludere -------------------
+#
+# Due verdetti "smentita" sono arrivati dalla prima esecuzione dal vivo, e
+# nessuno dei due era una smentita. L'effort confrontava due risposte tagliate
+# entrambe al tetto di `max_tokens` - misurava il tetto. Il ciclo agentico
+# girava in un momento in cui la cache non rileggeva nemmeno una richiesta
+# identica - descriveva le condizioni del momento, non l'API.
+#
+# La lezione e' la stessa del 400 che parlava d'altro: un controllo deve
+# verificare che valgano le condizioni della propria conclusione.
+
+
+class _Risposta:
+    def __init__(self, output=100, stop="end_turn", riletti=0, scritti=0):
+        self.stop_reason = stop
+        self.usage = type(
+            "U",
+            (),
+            {
+                "input_tokens": 1,
+                "output_tokens": output,
+                "cache_creation_input_tokens": scritti,
+                "cache_read_input_tokens": riletti,
+            },
+        )()
+
+
+class _ClientFinto:
+    """Restituisce le risposte preparate, in ordine."""
+
+    def __init__(self, risposte):
+        self._risposte = list(risposte)
+        self.chiamate = 0
+        self.messages = self
+
+    async def create(self, **kwargs):
+        self.chiamate += 1
+        return self._risposte.pop(0)
+
+
+async def test_l_effort_troncato_al_tetto_non_conclude():
+    from ecotokens.verifica import INDETERMINATO, _effetto_effort
+
+    client = _ClientFinto(
+        [
+            _Risposta(output=3940, stop="end_turn"),
+            _Risposta(output=16_000, stop="max_tokens"),
+            _Risposta(output=16_000, stop="max_tokens"),
+        ]
+    )
+    controllo = await _effetto_effort(client, "claude-opus-5")
+    assert controllo.esito == INDETERMINATO
+    assert "troncati al tetto" in controllo.osservato
+
+
+async def test_l_effort_non_troncato_conclude_normalmente():
+    from ecotokens.verifica import _effetto_effort
+
+    client = _ClientFinto(
+        [_Risposta(output=n) for n in (400, 1000, 2600)]
+    )
+    controllo = await _effetto_effort(client, "claude-opus-5")
+    assert controllo.esito == COMBACIA
+
+
+async def test_il_ciclo_agentico_si_ferma_se_la_cache_non_rilegge_affatto():
+    """Il testimone: la stessa richiesta ripetuta deve rileggere. Se non lo fa,
+    qualunque verdetto sul prefisso descriverebbe il momento, non l'API."""
+    from ecotokens.verifica import INDETERMINATO, _ciclo_agentico
+
+    client = _ClientFinto([_Risposta(scritti=5000), _Risposta(riletti=0)])
+    controllo = await _ciclo_agentico(client, "claude-opus-5")
+    assert controllo.esito == INDETERMINATO
+    assert "richiesta ripetuta non rilegge" in controllo.osservato
+    assert client.chiamate == 2
+
+
+async def test_una_rilettura_ferma_e_una_tenuta_debole_non_una_smentita():
+    """Osservato dal vivo: 2809 al secondo turno e ancora 2809 al terzo. Il
+    prefisso reggeva; la vecchia condizione unica lo chiamava smentita."""
+    from ecotokens.verifica import _ciclo_agentico
+
+    client = _ClientFinto(
+        [
+            _Risposta(scritti=5000),
+            _Risposta(riletti=2809),
+            _Risposta(riletti=0),
+            _Risposta(riletti=2809),
+            _Risposta(riletti=2809),
+        ]
+    )
+    controllo = await _ciclo_agentico(client, "claude-opus-5")
+    assert controllo.esito == COMBACIA
+    assert "reggono ma non crescono" in controllo.osservato
+    assert "piu' piccolo di quello assunto" in controllo.nota
+
+
+async def test_se_il_prefisso_non_regge_e_una_smentita_vera():
+    from ecotokens.verifica import DIVERGE, _ciclo_agentico
+
+    client = _ClientFinto(
+        [
+            _Risposta(scritti=5000),
+            _Risposta(riletti=2809),
+            _Risposta(riletti=0),
+            _Risposta(riletti=0),
+            _Risposta(riletti=0),
+        ]
+    )
+    controllo = await _ciclo_agentico(client, "claude-opus-5")
+    assert controllo.esito == DIVERGE
+    assert "README" in controllo.nota

@@ -179,15 +179,42 @@ async def _effetto_effort(client, modello: str) -> Controllo:
 
     domanda = "Spiega in modo completo perche' il cielo appare azzurro."
     osservati: dict[str, int] = {}
+    troncati: list[str] = []
     for livello in ("low", "high", "max"):
         messaggio = await client.messages.create(
+            # Il tetto era 4096, e con quello il controllo si e' smentito da
+            # solo: `high` e `max` producevano **esattamente** 4096 token con
+            # `stop_reason=max_tokens`, cioe' erano stati tagliati, e il
+            # rapporto 1.00x fra i due misurava il tetto invece dell'effort.
+            # Il controllo ha concluso "il verso non regge" da una misura
+            # satura. Alzare il tetto non basta - puo' saturare comunque - e
+            # per questo il taglio viene rilevato e reso INDETERMINATO.
             model=modello,
-            max_tokens=4096,
+            max_tokens=16_000,
             thinking={"type": "adaptive"},
             output_config={"effort": livello},
             messages=[{"role": "user", "content": domanda}],
         )
         osservati[livello] = _usage(messaggio)["output_tokens"]
+        if getattr(messaggio, "stop_reason", None) == "max_tokens":
+            troncati.append(livello)
+
+    if troncati:
+        return Controllo(
+            assunzione="Effetto dell'effort sui token generati",
+            atteso="low < high < max in token generati",
+            osservato=(
+                ", ".join(f"{k} {v}" for k, v in osservati.items())
+                + f" - troncati al tetto: {', '.join(troncati)}"
+            ),
+            esito=INDETERMINATO,
+            nota=(
+                "Una risposta tagliata a `max_tokens` non dice quanto avrebbe "
+                "generato: confrontare due risposte entrambe al tetto misura il "
+                "tetto. Serve rifare con un limite piu' alto."
+            ),
+            chiamate=3,
+        )
 
     base = osservati.get("high") or 1
     rapporti = {k: v / base for k, v in osservati.items()}
@@ -379,6 +406,46 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
     def blocco(testo: str) -> list[dict[str, Any]]:
         return [{"type": "text", "text": testo}]
 
+    def con_marcatore(messaggio: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "role": "user",
+            "content": [
+                {**messaggio["content"][0], "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+
+    # Il testimone, e senza di lui questo controllo non vale niente.
+    #
+    # Misurato: c'e' stato un momento in cui la cache non rileggeva **nulla**,
+    # nemmeno la stessa identica richiesta ripetuta - il caso che dieci minuti
+    # prima funzionava. In quella finestra questo controllo avrebbe dichiarato
+    # smentita l'assunzione su cui poggia il numero piu' alto del progetto,
+    # e la smentita avrebbe descritto le condizioni del momento, non l'API.
+    #
+    # Quindi prima si chiede una cosa che **deve** funzionare: la stessa
+    # richiesta due volte. Se nemmeno quella rilegge, non si conclude niente.
+    apertura = [{"role": "user", "content": blocco(f"apertura: {corpo}")}]
+    await client.messages.create(
+        model=modello, max_tokens=16, messages=[con_marcatore(apertura[0])]
+    )
+    testimone = await client.messages.create(
+        model=modello, max_tokens=16, messages=[con_marcatore(apertura[0])]
+    )
+    if _usage(testimone)["cache_read_input_tokens"] <= 0:
+        return Controllo(
+            assunzione="Il prefisso di conversazione regge fra i turni",
+            atteso="le riletture crescono a ogni turno",
+            osservato="la stessa richiesta ripetuta non rilegge: 0",
+            esito=INDETERMINATO,
+            nota=(
+                "Non si sta misurando la tenuta del prefisso: in questo momento "
+                "la cache non rilegge nemmeno una richiesta identica. Qualunque "
+                "verdetto qui descriverebbe le condizioni del momento, non "
+                "l'API. Rifare piu' tardi."
+            ),
+            chiamate=2,
+        )
+
     for indice in range(3):
         # La storia resta **sempre** in forma a blocchi. Tenerla come stringa e
         # convertirla solo per l'ultimo messaggio cambierebbe la forma del
@@ -411,18 +478,36 @@ async def _ciclo_agentico(client, modello: str) -> Controllo:
             {"role": "user", "content": blocco(f"risultato del tool: {corpo}")},
         ]
 
-    cresce = letture[2] > letture[1] > 0
+    # Due domande distinte, e tenerle separate cambia la conclusione. La prima
+    # e' se il prefisso **regge**: al secondo e terzo turno si rilegge qualcosa
+    # invece di riscrivere tutto. La seconda e' se cio' che si rilegge
+    # **cresce** con la conversazione. Osservata una volta una rilettura ferma
+    # sul primo messaggio (2809, poi ancora 2809): il prefisso reggeva e non
+    # cresceva, e la vecchia condizione unica - `letture[2] > letture[1] > 0` -
+    # avrebbe chiamato quel caso una smentita. Non lo e': e' una tenuta piu'
+    # debole di quella assunta, che e' un'informazione diversa e va detta.
+    regge = letture[1] > 0 and letture[2] > 0
+    cresce = letture[2] > letture[1]
     return Controllo(
         assunzione="Il prefisso di conversazione regge fra i turni",
-        atteso="le riletture crescono a ogni turno",
-        osservato=f"riletture: {letture[0]}, {letture[1]}, {letture[2]}",
-        esito=COMBACIA if cresce else DIVERGE,
+        atteso="riletture > 0 dal secondo turno, e in crescita",
+        osservato=(
+            f"riletture: {letture[0]}, {letture[1]}, {letture[2]}"
+            + ("" if cresce else " (reggono ma non crescono)" if regge else "")
+        ),
+        esito=COMBACIA if regge else DIVERGE,
         nota=(
             "E' l'assunzione su cui poggia il +52% del carico agentico, il "
             "numero piu' alto che il progetto dichiara. Se diverge, quel "
             "numero va tolto dal README prima di ogni altra cosa."
+            if not regge
+            else ""
+            if cresce
+            else "Il prefisso regge ma la rilettura non cresce: si riusa il "
+            "primo messaggio e si riscrive la coda a ogni turno. Il risparmio "
+            "esiste ed e' piu' piccolo di quello assunto."
         ),
-        chiamate=3,
+        chiamate=5,
     )
 
 
@@ -437,7 +522,7 @@ CONTROLLI = (
 
 # Quante chiamate costa l'intera verifica. Dichiarato prima di eseguirla:
 # un comando che spende deve dire quanto prima di spendere.
-CHIAMATE_PREVISTE = 12
+CHIAMATE_PREVISTE = 14
 
 
 async def verifica(client, modello: str, *, circolare: bool = False) -> Rapporto:

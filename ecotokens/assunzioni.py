@@ -19,8 +19,17 @@ Tre livelli, e la differenza fra i primi due è tutta:
   invecchiata, non inventata.
 * ``dichiarata`` — un modello scelto da noi, plausibile e non verificato. Sono
   le voci che possono spostare un numero del README.
-* ``verificata`` — confrontata con l'API vera. Oggi **nessuna**, e finché resta
-  così va detto.
+* ``verificata`` — confrontata con l'API vera, con l'esito e la data scritti
+  accanto. Il 30 agosto 2026 sono diventate tre, dopo la prima esecuzione di
+  ``ecotokens verifica --live``: le soglie minime di cache su Opus 5, il limite
+  dei quattro breakpoint, il 400 sui parametri rimossi. Le altre dieci restano
+  documentate o dichiarate, e finché è così va detto.
+
+Quella stessa esecuzione ha prodotto due verdetti di **smentita** che non erano
+smentite — uno misurava il tetto di ``max_tokens`` invece dell'effort, l'altro
+girava in un momento in cui la cache non rileggeva nemmeno una richiesta
+identica. Sono stati corretti nei controlli, non qui: una voce di questo file
+non cambia perché lo strumento ha sbagliato a guardarla.
 """
 
 from __future__ import annotations
@@ -42,6 +51,10 @@ class Assunzione:
     # numero di questo progetto sarebbe sbagliato?
     cosa_cambia: str
     come_verificarla: str
+    # Cosa ha risposto l'API vera, e quando. Vuoto finche' la misura non
+    # e' stata fatta: e' l'unica differenza fra questo file e un elenco di
+    # opinioni ben scritte.
+    esito_dal_vivo: str = ""
 
 
 ASSUNZIONI: list[Assunzione] = [
@@ -73,7 +86,7 @@ ASSUNZIONI: list[Assunzione] = [
     Assunzione(
         nome="Soglie minime di cache",
         valore="Opus 5 = 512, Sonnet 5 = 1024, Haiku 4.5 = 4096 token",
-        fonte=DOCUMENTATA,
+        fonte=VERIFICATA,
         dove="pricing.MODELS.cache_min_tokens",
         cosa_cambia=(
             "Quando il pianificatore rinuncia a marcare. Non sono monotone, ed è "
@@ -86,17 +99,30 @@ ASSUNZIONI: list[Assunzione] = [
             "`--live` con un prompt appena sotto e appena sopra la soglia: "
             "`cache_creation_input_tokens` resta a zero sotto."
         ),
+        esito_dal_vivo=(
+            "30 agosto 2026, claude-opus-5: **0 token scritti** a 307 token di "
+            "prefisso, **1053** a 921. La soglia dichiarata di 512 regge nel "
+            "verso che conta: sotto non si forma niente e l'API tace. "
+            "Verificata su Opus 5 soltanto — le altre due restano documentate, "
+            "e quella di Haiku 4.5 è la più alta delle tre."
+        ),
     ),
     Assunzione(
         nome="Quattro breakpoint al massimo",
         valore="al più 4 blocchi con `cache_control` per richiesta",
-        fonte=DOCUMENTATA,
+        fonte=VERIFICATA,
         dove="pipeline.cache_planner",
         cosa_cambia=(
             "Il quinto verrebbe rifiutato con un 400 a metà richiesta, cioè molto "
             "più tardi e molto meno chiaramente di un rifiuto locale."
         ),
         come_verificarla="`--live` con cinque breakpoint: deve tornare un 400.",
+        esito_dal_vivo=(
+            "30 agosto 2026: **400 sul quinto breakpoint**. È la voce che più "
+            "meritava una prova vera, perché il simulatore ne accettava cinque: "
+            "una copia più permissiva dell'originale rendeva vuoti proprio i "
+            "test che dovevano sostenere questo limite."
+        ),
     ),
     Assunzione(
         nome="Finestra di lookback di 20 blocchi",
@@ -117,7 +143,7 @@ ASSUNZIONI: list[Assunzione] = [
     Assunzione(
         nome="I parametri rimossi danno 400",
         valore="temperature, top_p, top_k, prefill assistant, n > 1",
-        fonte=DOCUMENTATA,
+        fonte=VERIFICATA,
         dove="translate.to_anthropic",
         cosa_cambia=(
             "Se non fossero rifiutati, il gateway starebbe scartando parametri "
@@ -125,6 +151,12 @@ ASSUNZIONI: list[Assunzione] = [
             "senza motivo."
         ),
         come_verificarla="`--live` mandandone uno: deve tornare un 400.",
+        esito_dal_vivo=(
+            "30 agosto 2026: **400 su `temperature`**, e il messaggio dell'errore "
+            "parla di `temperature` — controllato, dopo che un 400 di tutt'altra "
+            "natura aveva fatto passare questa stessa voce per la ragione "
+            "sbagliata."
+        ),
     ),
     # --- quelle che abbiamo scelto noi ------------------------------------
     Assunzione(

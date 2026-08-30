@@ -86,22 +86,45 @@ def test_le_dichiarate_sono_segnate_come_tali():
     assert "Tariffe dei modelli" not in dichiarate
 
 
-def test_nessuna_e_verificata_finche_non_lo_e():
+# Il 30 agosto 2026 questo test si e' acceso, ed e' successo per la ragione
+# giusta: `ecotokens verifica --live` e' stato eseguito contro l'API vera per
+# la prima volta. Restano tre voci, non una di piu', e ognuna deve portare
+# scritto cosa ha risposto l'API.
+VERIFICATE_ATTESE = {
+    "Soglie minime di cache",
+    "Quattro breakpoint al massimo",
+    "I parametri rimossi danno 400",
+}
+
+
+def test_solo_cio_che_e_stato_misurato_e_verificato():
     """Non e' un test sul codice: e' un promemoria che si accende da solo.
 
     Marcare una voce come verificata senza aver eseguito la misura e' l'unico
     modo in cui questo file puo' diventare peggio che inutile - un documento
     che sembra autorevole a sostegno di un'affermazione che nessuno ha
-    controllato. Se un giorno fallisce, deve essere perche' la verifica c'e'
-    stata davvero, e allora si aggiorna anche il README.
+    controllato. L'elenco sopra si allunga **dopo** una misura, mai prima.
     """
-    verificate = per_fonte(VERIFICATA)
-    assert verificate == [], (
-        "Qualcuno ha segnato come verificata: "
-        + ", ".join(v.nome for v in verificate)
-        + ". Se la misura --live e' stata fatta, aggiornare anche il README e "
-        "questo test; se non e' stata fatta, la voce va rimessa a dichiarata."
+    verificate = {v.nome for v in per_fonte(VERIFICATA)}
+    assert verificate == VERIFICATE_ATTESE, (
+        "L'insieme delle voci verificate e' cambiato. Aggiungerne una senza "
+        "aver eseguito `verifica --live` e' esattamente cio' che questo test "
+        "impedisce; se la misura c'e' stata, aggiornare anche il README."
     )
+
+
+def test_una_voce_verificata_dice_cosa_ha_risposto_l_api():
+    """«Verificata» senza l'esito e' una spunta verde: dice che qualcuno ha
+    guardato, non cosa ha visto. La data serve perche' l'API cambia."""
+    for voce in per_fonte(VERIFICATA):
+        assert voce.esito_dal_vivo, voce.nome
+        assert "2026" in voce.esito_dal_vivo, voce.nome
+
+
+def test_chi_non_e_verificata_non_finge_di_esserlo():
+    for voce in ASSUNZIONI:
+        if voce.fonte != VERIFICATA:
+            assert not voce.esito_dal_vivo, voce.nome
 
 
 def test_la_console_dice_che_i_numeri_non_vengono_dall_api_vera():
