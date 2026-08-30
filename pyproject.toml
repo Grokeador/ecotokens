@@ -4,7 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ecotokens"
-version = "0.2.0"
+# Minore, non patch: la sezione di questa versione nel CHANGELOG ha delle
+# **Rotture** - il profilo predefinito passa da `aggressivo` a `prudente`, e
+# chi non ha un file di configurazione vedra' un comportamento diverso. Finche'
+# la maggiore e' 0 una minore puo' contenerle, ed e' scritto in cima al
+# CHANGELOG; pubblicarle sotto una patch non lo sarebbe.
+version = "0.3.0"
 # Non "gateway OpenAI-compatibile": parla **solo** con Anthropic, e accetta il
 # dialetto OpenAI in ingresso perche' cosi' le applicazioni esistenti non si
 # riscrivono. Dirlo al contrario e' il malinteso che il progetto si e' imposto
@@ -60,6 +65,12 @@ dev = [
   "openai>=1.40",
   "numpy>=1.26",
   "coverage>=7.4",
+  # Serve a **controllare** il pacchetto prima di pubblicarlo, non solo a
+  # caricarlo: `twine check` rifiuta un README che PyPI non saprebbe rendere,
+  # ed e' l'unico modo di scoprirlo prima invece che dopo - una versione
+  # pubblicata non si sostituisce, si abbandona.
+  "twine>=5.0",
+  "build>=1.2",
 ]
 
 [project.scripts]

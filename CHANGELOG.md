@@ -11,6 +11,14 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ## [Non rilasciato]
 
+## [0.3.0] — 2026-08-30
+
+La versione in cui i numeri hanno **smesso di essere solo simulati**. La chiave
+è arrivata, `verifica --live` è girato per la prima volta, e le prime misure
+contro `api.anthropic.com` hanno confermato tre assunzioni, corretto due
+smentite che non erano smentite, e trovato due difetti del gateway che nessun
+test poteva vedere.
+
 ### Numeri cambiati
 
 - **I moltiplicatori dell'effort erano circa il doppio più generosi del vero.**
