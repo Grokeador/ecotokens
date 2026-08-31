@@ -77,10 +77,16 @@ dev = [
 ecotokens = "ecotokens.cli:main"
 
 [project.urls]
-# Da valorizzare al momento della pubblicazione: senza, la scheda su PyPI non
-# ha nessun collegamento e chi la trova non puo' arrivare al codice.
-# Homepage = "https://github.com/<utente>/ecotokens"
-# Issues = "https://github.com/<utente>/ecotokens/issues"
+# Senza questi, la scheda su PyPI non ha nessun collegamento e chi la trova non
+# puo' arrivare al codice - il che, per un pacchetto MIT, e' una contraddizione.
+#
+# **Il repository e' ancora privato**: finche' lo resta, questi indirizzi
+# rispondono 404 a chiunque non sia il proprietario. Vanno resi pubblici il
+# repository e il pacchetto insieme, o prima il repository - mai il contrario.
+Homepage = "https://github.com/Grokeador/ecotokens"
+Repository = "https://github.com/Grokeador/ecotokens"
+Issues = "https://github.com/Grokeador/ecotokens/issues"
+Changelog = "https://github.com/Grokeador/ecotokens/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ecotokens"]
