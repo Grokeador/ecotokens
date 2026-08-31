@@ -1,4 +1,13 @@
-"""EcoTokens: gateway locale per Claude che riduce la spesa in token.
+"""EcoTokens: fa costare meno le richieste a Claude.
+
+Due forme, stesso motore. Come **libreria**, dentro il tuo programma:
+
+    from ecotokens import Economico
+    client = Economico(anthropic.AsyncAnthropic())
+
+Come **programma a parte** (`ecotokens serve`), per coprire applicazioni
+che non hai scritto o mettere un tetto di spesa comune a piu' di una.
+
 
 La versione sta in un posto solo, `pyproject.toml`, e da li' viene letta a
 runtime. Era scritta a mano in tre punti - il pacchetto, il titolo dell'app
@@ -30,7 +39,7 @@ def _leggi_versione() -> str:
             return "0+sconosciuta"
 
 
-def __getattr__(nome: str) -> str:
+def __getattr__(nome: str):
     """La versione si legge alla prima richiesta, non all'import.
 
     `importlib.metadata` costa 265 ms, e quasi nessun comando ha bisogno di
@@ -41,7 +50,17 @@ def __getattr__(nome: str) -> str:
         valore = _leggi_versione()
         globals()["__version__"] = valore
         return valore
+    # `Economico` arriva per la stessa strada, e per una ragione simile: il
+    # modulo che lo contiene importa `server`, che tira dentro FastAPI e
+    # uvicorn. Farli caricare a chiunque scriva `import ecotokens` - compreso
+    # chi vuole solo sapere la versione - sarebbe un peso pagato da tutti per
+    # comodita' di uno.
+    if nome == "Economico":
+        from .libreria import Economico as classe
+
+        globals()["Economico"] = classe
+        return classe
     raise AttributeError(f"module {__name__!r} has no attribute {nome!r}")
 
 
-__all__ = ["__version__"]
+__all__ = ["__version__", "Economico"]

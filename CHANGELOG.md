@@ -11,6 +11,33 @@ cambio della minore può contenere rotture: sono elencate per prime.
 
 ## [Non rilasciato]
 
+### Nuovo
+
+- **EcoTokens si può usare come libreria**, non solo come programma a parte.
+
+  ```python
+  from ecotokens import Economico
+  client = Economico(anthropic.AsyncAnthropic())
+  ```
+
+  Restituisce gli stessi oggetti `Message` dell'SDK: cambia il conto, non il
+  codice. Toglie l'ostacolo che pesa di più — la chiave non passa più da un
+  programma di terzi — ed è la forma giusta per chi scrive il proprio codice,
+  cioè proprio chi guadagna di più (il +76,0% misurato dal vivo riguarda un
+  ciclo agentico). Cache esatta e contabilità vivono in memoria e muoiono col
+  processo se non si passa `memoria=`; lo streaming non passa ancora dagli
+  stadi e lo dice invece di fingere.
+
+### Corretto
+
+- **Un `system` scritto come stringa non veniva mai messo in cache.** L'API lo
+  accetta sia come stringa sia come lista di blocchi, e la stringa è la forma
+  che scrive quasi chiunque — ma il pianificatore può marcare solo un blocco, e
+  con una stringa non marcava niente **senza dirlo**. Riguardava la porta
+  nativa `/v1/messages` da sempre. Trovato scrivendo la libreria, non usando il
+  gateway: 657 test non lo vedevano perché guardavano tutti dal dialetto
+  OpenAI, dove la traduzione converte il `system` in blocchi e copriva il buco.
+
 ## [0.3.0] — 2026-08-30
 
 La versione in cui i numeri hanno **smesso di essere solo simulati**. La chiave

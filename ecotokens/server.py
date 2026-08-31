@@ -144,6 +144,23 @@ class Gateway:
         for nome in scartati:
             params.pop(nome)
 
+        # `system` in forma di blocchi, anche quando arriva come stringa.
+        #
+        # L'API accetta le due forme come equivalenti, e la stringa e' quella
+        # che scrive quasi chiunque. Il pianificatore pero' puo' attaccare un
+        # `cache_control` **solo a un blocco** (`cache_planner.py`, la riga con
+        # `isinstance(system, list)`): con una stringa non marcava niente e
+        # taceva. Un guasto silenzioso della famiglia peggiore - il gateway
+        # sembrava funzionare, il prefisso non andava mai in cache, e nessun
+        # errore lo diceva.
+        #
+        # La conversione non cambia cosa legge il modello. Cambia solo che il
+        # prefisso diventa marcabile, e che le due porte mandano la stessa
+        # forma: due forme diverse sono due voci di cache invece di una.
+        sistema = params.get("system")
+        if isinstance(sistema, str) and sistema:
+            params["system"] = [{"type": "text", "text": sistema}]
+
         model = resolve_model(params.get("model") or self.settings.upstream.default_model)
         params["model"] = model
         info = model_info(model)

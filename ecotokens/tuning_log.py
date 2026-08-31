@@ -1686,5 +1686,60 @@ TUNING_LOG: list[TuningEntry] = [
             "costano qualche dollaro l'una e restano simulate."
         ),
     ),
+    TuningEntry(
+        area="gateway",
+        title="Un `system` scritto come stringa non veniva mai messo in cache",
+        finding=(
+            "Scrivendo la libreria, il primo test che chiedeva «lo stadio che "
+            "vale il +76% fa qualcosa?» ha risposto **no**. Il pianificatore "
+            "attacca il `cache_control` solo a un blocco, e controlla "
+            "`isinstance(system, list)`: l'API pero' accetta `system` anche "
+            "come **stringa**, che e' la forma che scrive quasi chiunque. In "
+            "quel caso non marcava niente e non lo diceva."
+        ),
+        effect=(
+            "Il difetto non era della libreria: era della porta nativa "
+            "`/v1/messages`, e c'era da sempre. Un client che manda una "
+            "stringa vedeva il gateway funzionare, il prefisso non andare mai "
+            "in cache, e nessun errore da nessuna parte - la famiglia di "
+            "guasti che `diagnosi` esiste per stanare, questa volta invisibile "
+            "anche a lui. `make_native_context` converte ora la stringa in un "
+            "blocco: il modello legge la stessa cosa, il prefisso diventa "
+            "marcabile, e le due porte mandano la stessa forma (due forme "
+            "diverse sono due voci di cache invece di una).\n\n"
+            "La lezione non e' sul `system`. **Scrivere una seconda faccia "
+            "dello stesso motore ha trovato in un pomeriggio un difetto che "
+            "657 test non vedevano**, perche' i test guardavano tutti dalla "
+            "stessa parte: passavano dal dialetto OpenAI, dove la traduzione "
+            "converte il `system` in blocchi da sola e copriva il buco."
+        ),
+    ),
+    TuningEntry(
+        area="gateway",
+        title="EcoTokens come libreria: la chiave non si muove piu'",
+        finding=(
+            "Le misure dicono che il valore e' concentrato in due stadi su "
+            "nove, e che il piu' grosso - il pianificatore, +76,0% dal vivo su "
+            "un ciclo agentico - **non ha bisogno di niente di condiviso**. "
+            "Chi guadagna di piu' e' pero' chi scrive il proprio codice, cioe' "
+            "esattamente chi una riga la aggiunge senza pensarci e un processo "
+            "in piu' non lo vuole: si chiedeva lo sforzo maggiore a chi aveva "
+            "il guadagno maggiore."
+        ),
+        effect=(
+            "`ecotokens.Economico` avvolge un `anthropic.AsyncAnthropic` e "
+            "restituisce gli stessi oggetti `Message`. L'ostacolo che toglie "
+            "non e' la comodita': e' che **la chiave non passa piu' da un "
+            "programma di terzi**, che e' l'obiezione che in un'azienda ferma "
+            "l'adozione prima di ogni discussione tecnica.\n\n"
+            "Due stadi valgono meno in questa forma, e sta scritto nel modulo "
+            "invece che scoperto dopo: cache esatta e contabilita' vivono in "
+            "memoria e muoiono col processo, a meno di passare `memoria=`. Il "
+            "gateway resta per i tre casi che una libreria non copre: "
+            "applicazioni non tue, tetto di spesa comune, cache condivisa fra "
+            "processi. Lo streaming per ora **dice di no** invece di passare "
+            "dritto fingendo di risparmiare."
+        ),
+    ),
 
 ]

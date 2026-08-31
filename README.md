@@ -1,7 +1,49 @@
 # EcoTokens
 
-Gateway locale che si mette tra le tue applicazioni e l'API Anthropic, e riduce
-la spesa in token.
+**Fa costare meno le richieste a Claude, senza cambiare le risposte.**
+Misurato contro `api.anthropic.com`: **−76%** su un ciclo agentico, rispetto a
+uno sviluppatore che il prompt caching se lo mette già da solo.
+
+> *Cut your Claude API bill without changing your answers. Measured against the
+> real API: **76% cheaper** on an agentic loop, compared with a developer who
+> already puts `cache_control` on their own system prompt. MIT, self-hosted,
+> Anthropic-only. The README is in Italian — the code and the numbers travel
+> fine, and `ecotokens merito` recomputes every figure below on your machine.*
+
+## Due modi di usarlo
+
+**Come libreria**, dentro il tuo programma. Nessun processo da avviare, e
+soprattutto **la tua chiave non esce di casa**: il client resta tuo.
+
+```python
+import anthropic
+from ecotokens import Economico
+
+client = Economico(anthropic.AsyncAnthropic())
+
+risposta = await client.messages.create(
+    model="claude-opus-5",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Ciao"}],
+)
+```
+
+`risposta` è l'oggetto `Message` dell'SDK, identico a quello che avresti
+ricevuto senza. Cambia il conto, non il codice.
+
+**Come programma a parte** (`ecotokens serve`), quando serve una delle tre cose
+che una libreria non può fare: coprire applicazioni che non hai scritto,
+mettere un tetto di spesa **comune** a più programmi, o far condividere la
+cache delle risposte fra processi diversi.
+
+```bash
+pip install ecotokens
+```
+
+---
+
+Il resto di questa pagina riguarda la forma "programma a parte", che è quella
+più vecchia e più documentata.
 
 **Parla solo con Claude.** Non c'è nessun provider OpenAI nel progetto: tutto
 quello che fa — prompt caching a match di prefisso, `output_config.effort`,

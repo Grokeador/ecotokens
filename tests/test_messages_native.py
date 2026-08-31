@@ -228,3 +228,33 @@ def test_generare_non_produce_campioni_di_taratura(client):
     dell'input separato da quello che la cache ha gia' servito."""
     client.post("/v1/messages", json=payload())
     assert client.get("/admin/stats").json()["calibration"] == []
+
+
+def test_un_system_stringa_diventa_marcabile(client):
+    """Il guasto silenzioso peggiore trovato sulla porta nativa.
+
+    L'API accetta `system` come stringa o come lista di blocchi, e la stringa
+    e' quella che scrive quasi chiunque. Il pianificatore pero' puo' attaccare
+    un `cache_control` solo a un blocco: con una stringa non marcava niente e
+    **non lo diceva**. Il gateway sembrava funzionare, il prefisso non andava
+    mai in cache, e nessun errore compariva da nessuna parte.
+
+    Trovato scrivendo la libreria, non usando il gateway: la stessa strada,
+    guardata da un'altra parte.
+    """
+    lungo = "istruzione operativa dettagliata " * 400
+    risposta = client.post(
+        "/v1/messages",
+        json={
+            "model": "claude-opus-5",
+            "max_tokens": 64,
+            "system": lungo,
+            "messages": [{"role": "user", "content": "ciao"}],
+        },
+    )
+    assert risposta.status_code == 200
+
+    inviata = client.stub.last
+    blocchi = inviata.get("system")
+    assert isinstance(blocchi, list), "il system deve partire in forma di blocchi"
+    assert any(b.get("cache_control") for b in blocchi), "nessun breakpoint piazzato"
