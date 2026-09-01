@@ -238,3 +238,28 @@ async def test_il_testimone_non_si_arrende_al_primo_zero(monkeypatch):
     assert len(chiamate) == TENTATIVI_TESTIMONE == 5
     assert rapporto.testimone == 2800
     assert rapporto.eseguita is True
+
+
+def test_anche_il_README_inglese_porta_gli_stessi_numeri():
+    """Due pagine, quattro numeri ciascuna: e' la stessa trappola di prima con
+    una copia in piu'.
+
+    La pagina inglese esiste per farsi trovare da chi non legge l'italiano, ed
+    e' proprio quella che nessuno riguarderebbe aggiornando le misure: chi
+    rifa' `ecotokens merito` guarda il README che sa leggere. Senza questo
+    test, la versione destinata agli stranieri sarebbe la prima a invecchiare.
+    """
+    from pathlib import Path
+
+    from ecotokens.consiglia import MERITO
+
+    testo = (Path(__file__).resolve().parents[1] / "README.en.md").read_text(
+        encoding="utf-8"
+    )
+    for chiave, valore in MERITO.items():
+        # La pagina inglese usa il punto decimale: +52,3% diventa +52.3%.
+        inglese = valore.replace(",", ".").replace("-", "−")
+        assert inglese in testo.replace("-", "−"), (
+            f"{chiave}: {valore} manca da README.en.md. Rieseguire "
+            "`ecotokens merito` e allineare tutte e due le pagine."
+        )

@@ -95,7 +95,7 @@ packages = ["ecotokens"]
 # Nell'archivio dei sorgenti entrano anche i test e la configurazione di
 # esempio: chi lo scarica deve poter verificare da se' che i numeri del README
 # siano veri, che e' l'unica cosa che distingue questo progetto dagli altri.
-include = ["ecotokens", "tests", "README.md", "LICENSE", "ecotokens.example.toml", "pyproject.toml"]
+include = ["ecotokens", "tests", "README.md", "README.en.md", "LICENSE", "ecotokens.example.toml", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

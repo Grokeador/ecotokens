@@ -1,14 +1,12 @@
 # EcoTokens
 
 **Fa costare meno le richieste a Claude, senza cambiare le risposte.**
-Misurato contro `api.anthropic.com`: **−76%** su un ciclo agentico, rispetto a
-uno sviluppatore che il prompt caching se lo mette già da solo.
+Misurato contro `api.anthropic.com`: **76% in meno** su un ciclo agentico,
+rispetto a uno sviluppatore che il prompt caching se lo mette già da solo.
 
-> *Cut your Claude API bill without changing your answers. Measured against the
-> real API: **76% cheaper** on an agentic loop, compared with a developer who
-> already puts `cache_control` on their own system prompt. MIT, self-hosted,
-> Anthropic-only. The README is in Italian — the code and the numbers travel
-> fine, and `ecotokens merito` recomputes every figure below on your machine.*
+> **🇬🇧 [Read this in English →](README.en.md)** — a self-contained page, not
+> a summary: install, the numbers, how to re-measure them yourself, and the
+> workloads where this is *not* worth installing.
 
 ## Due modi di usarlo
 
