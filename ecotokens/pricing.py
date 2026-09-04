@@ -31,6 +31,14 @@ class ModelInfo:
     supports_mid_conversation_system: bool = False
     # Livello di capacita' per il router: piu' alto = piu' capace e costoso.
     tier: int = 0
+    # Chi risponde. Serve al registro e al quadro per non mescolare provider
+    # con regole di cache diverse dentro la stessa media.
+    provider: str = "anthropic"
+    # Falso quando le tariffe non le sappiamo. Un modello esterno di cui
+    # nessuno ha dichiarato il prezzo si misura lo stesso - i token sono
+    # token - ma la sua spesa non entra nei totali: un prezzo supposto
+    # produce dollari che nessuno ha pagato e che nessuno vede arrivare.
+    tariffa_dichiarata: bool = True
 
 
 MODELS: dict[str, ModelInfo] = {
@@ -112,6 +120,64 @@ ALIASES: dict[str, str] = {
 }
 
 
+# Prefisso con cui si indirizza un modello che gira sulla macchina di chi lo
+# usa. Il gateway non puo' dedurlo dal nome - "qwen2.5-coder" non dice dove
+# stia girando - e indovinare qui costerebbe caro nelle due direzioni: un
+# modello locale prezzato come remoto inventa spesa, uno remoto prezzato come
+# locale la nasconde. Il prefisso e' l'unico modo di saperlo senza chiedere.
+PREFISSO_LOCALE = "locale/"
+
+
+# Tariffe dei modelli non-Anthropic, dichiarate in configurazione sotto
+# [tariffe]. Vuoto di suo: nessun prezzo di terzi e' scritto nel codice,
+# perche' i listini cambiano e un numero sbagliato qui non si vede - si
+# presenta come una misura.
+MODELLI_ESTERNI: dict[str, ModelInfo] = {}
+
+
+def registra_modelli_esterni(tariffe: dict[str, dict]) -> None:
+    """Carica le tariffe dichiarate dall'utente. Sostituisce le precedenti."""
+    MODELLI_ESTERNI.clear()
+    for nome, voce in (tariffe or {}).items():
+        MODELLI_ESTERNI[nome.strip().lower()] = ModelInfo(
+            id=nome,
+            context_window=int(voce.get("context_window", 128_000)),
+            max_output=int(voce.get("max_output", 16_000)),
+            input_per_mtok=float(voce.get("input_per_mtok", 0.0)),
+            output_per_mtok=float(voce.get("output_per_mtok", 0.0)),
+            cache_min_tokens=int(voce.get("cache_min_tokens", 1024)),
+            tier=int(voce.get("tier", 0)),
+            provider=str(voce.get("provider", "esterno")),
+            tariffa_dichiarata=True,
+        )
+
+
+def _info_locale(nome: str) -> ModelInfo:
+    """Un modello che gira in casa: costo zero, e non e' una supposizione.
+
+    La finestra di contesto invece lo e', ed e' l'unico numero qui che possa
+    sbagliare per difetto: si dichiara in [tariffe] quando il modello ne ha
+    una piu' grande.
+    """
+    return ModelInfo(
+        id=nome,
+        context_window=131_072,
+        max_output=8_192,
+        input_per_mtok=0.0,
+        output_per_mtok=0.0,
+        # Nessun provider locale offre prompt caching a prefisso: la soglia
+        # sta a un valore irraggiungibile perche' il pianificatore non piazzi
+        # breakpoint che nessuno legge.
+        cache_min_tokens=10**9,
+        provider="locale",
+        tariffa_dichiarata=True,
+    )
+
+
+def e_locale(name: str | None) -> bool:
+    return bool(name) and str(name).strip().lower().startswith(PREFISSO_LOCALE)
+
+
 def _risolvi(name: str | None, fallback: str) -> tuple[str, bool]:
     """Risolve il nome e dice se e' stato **riconosciuto** o solo ripiegato.
 
@@ -127,6 +193,10 @@ def _risolvi(name: str | None, fallback: str) -> tuple[str, bool]:
     if key in MODELS:
         return key, True
     lowered = key.lower()
+    # Prima del catalogo Claude: un modello locale o dichiarato non deve mai
+    # cadere nel ripiego, o verrebbe prezzato alle tariffe di Opus.
+    if lowered.startswith(PREFISSO_LOCALE) or lowered in MODELLI_ESTERNI:
+        return key, True
     if lowered in MODELS:
         return lowered, True
     if lowered in ALIASES:
@@ -154,7 +224,16 @@ def modello_riconosciuto(name: str | None, fallback: str = DEFAULT_MODEL) -> boo
 
 
 def model_info(name: str) -> ModelInfo:
-    return MODELS.get(resolve_model(name), MODELS[DEFAULT_MODEL])
+    risolto = resolve_model(name)
+    if e_locale(risolto):
+        return _info_locale(risolto)
+    esterno = MODELLI_ESTERNI.get(risolto.strip().lower())
+    if esterno is not None:
+        return esterno
+    # Nome ignoto: resta il ripiego al default, che e' una decisione presa e
+    # coperta da `test_modello_ignoto`. La spesa e' reale e va registrata; a
+    # tenerla fuori dai confronti ci pensa gia' `modello_riconosciuto`.
+    return MODELS.get(risolto, MODELS[DEFAULT_MODEL])
 
 
 @dataclass(frozen=True)

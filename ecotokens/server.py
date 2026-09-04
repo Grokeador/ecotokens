@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
-import anthropic
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from . import __version__
 from .api.schemas import ChatCompletionRequest, error_payload
-from .config import Settings, intestazioni_upstream, load_settings
+from .config import Settings, load_settings
 from .pipeline.base import FORMAT_ANTHROPIC, Pipeline, RequestContext
 from .pipeline.budget import BudgetStage
 from .pipeline.cache_planner import CachePlannerStage
@@ -28,6 +27,7 @@ from .pipeline.router import RouterStage
 from .pipeline.semantic_cache import SemanticCacheStage
 from .pipeline.session import SessionStage
 from .pricing import Usage, model_info, resolve_model
+from .providers import costruisci_client
 from .store.db import Database
 from .store.repos import Store
 from .tokens import TokenCounter
@@ -49,21 +49,14 @@ class Gateway:
         self.pipeline = self._build_pipeline(settings)
 
     @staticmethod
-    def _build_client(settings: Settings) -> anthropic.AsyncAnthropic:
-        kwargs: dict[str, Any] = {
-            "timeout": settings.upstream.timeout_seconds,
-            "max_retries": settings.upstream.max_retries,
-        }
-        # Se la chiave non e' in configurazione, l'SDK la risolve da solo:
-        # ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN o un profilo `ant auth login`.
-        if settings.upstream.api_key:
-            kwargs["api_key"] = settings.upstream.api_key
-        if settings.upstream.base_url:
-            kwargs["base_url"] = settings.upstream.base_url
-        intestazioni = intestazioni_upstream(settings.upstream)
-        if intestazioni:
-            kwargs["default_headers"] = intestazioni
-        return anthropic.AsyncAnthropic(**kwargs)
+    def _build_client(settings: Settings) -> Any:
+        """Il client verso il provider configurato.
+
+        La costruzione sta in `providers/fabbrica.py`: e' rimasto un punto
+        solo anche adesso che i provider sono piu' di uno, ed e' il motivo per
+        cui nessuno stadio ha dovuto sapere chi risponde.
+        """
+        return costruisci_client(settings)
 
     @staticmethod
     def _build_pipeline(settings: Settings) -> Pipeline:

@@ -38,8 +38,17 @@ class ServerSettings(BaseModel):
 
 
 class UpstreamSettings(BaseModel):
-    """Come il gateway parla con l'API Anthropic."""
+    """Come il gateway parla con il provider a valle."""
 
+    # Chi risponde. I nomi noti stanno in `providers/fabbrica.py`.
+    #
+    # Il predefinito resta `anthropic` e resta il percorso nativo dell'SDK:
+    # e' l'unico su cui i risparmi dichiarati sono misurati, l'unico con lo
+    # streaming e con il conteggio esatto dei token. Cambiarlo funziona, ma
+    # cambia anche cosa il gateway sa promettere - i numeri del README non si
+    # trasferiscono a un provider che mette la cache in un altro modo, o che
+    # non ce l'ha affatto.
+    provider: str = "anthropic"
     # Lasciare vuoto: l'SDK risolve da solo ANTHROPIC_API_KEY,
     # ANTHROPIC_AUTH_TOKEN o un profilo creato con `ant auth login`.
     api_key: str | None = None
@@ -538,10 +547,24 @@ class Settings(BaseModel):
     semantic_cache: SemanticCacheSettings = Field(default_factory=SemanticCacheSettings)
     router: RouterSettings = Field(default_factory=RouterSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
+    # Tariffe dei modelli non-Anthropic, che il codice non conosce e non
+    # inventa. Nome del modello -> input_per_mtok, output_per_mtok, e
+    # facoltativi context_window, max_output, cache_min_tokens, tier.
+    # Senza dichiarazione un modello esterno viene comunque servito e contato
+    # in token; la sua spesa risulta zero, che e' falso ma **visibilmente**
+    # falso - il contrario di un prezzo plausibile e sbagliato.
+    # I modelli locali non servono qui: `locale/<nome>` costa zero davvero.
+    tariffe: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
         if self.profilo == "aggressivo":
             self.applica_profilo_aggressivo(solo_default=True)
+        # Le tariffe dichiarate valgono da qui in avanti, per chiunque calcoli
+        # un costo: sono un registro di modulo, non uno stato del gateway,
+        # perche' anche `bench` e la dashboard prezzano senza passare da lui.
+        from .pricing import registra_modelli_esterni
+
+        registra_modelli_esterni(self.tariffe)
 
     def applica_profilo_aggressivo(self, *, solo_default: bool = False) -> None:
         """Accende le leve che scambiano fedelta' contro spesa.
