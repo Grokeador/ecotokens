@@ -120,7 +120,11 @@ misure: `bench`
 · pagine:
 `/impostazioni` `/quadro` `/` `/admin/dashboard`
 
-Test: `.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
+Questo repository vive dentro `C:\BitCoder\ecotokens-repo`, accanto a BitCoder
+che lo usa come libreria: **repository separato, `.git` proprio, remoto proprio**
+— vicini, non fusi. L'ambiente e' uno solo e sta un livello piu' su.
+
+Test: `../.venv/Scripts/python.exe -m pytest -q` — devono passare tutti, e non
 devono mai richiedere rete. Ogni comando viene eseguito, non solo il suo
 `--help`; i dodici di misura sono marcati `lento` e si tolgono dal ciclo veloce
 con `-m "not lento"`.
