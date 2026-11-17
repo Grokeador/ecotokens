@@ -56,7 +56,7 @@ def test_una_richiesta_troppo_annidata_viene_comunque_servita(client):
         json={
             "model": "claude-opus-5",
             "max_tokens": 512,
-            "messages": [{"role": "user", "content": annidato(400)}],
+            "messages": [{"role": "user", "content": annidato(PROFONDITA_MASSIMA + 25)}],
         },
     )
     assert risposta.status_code in (200, 400), risposta.text
