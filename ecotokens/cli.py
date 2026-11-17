@@ -1614,6 +1614,55 @@ def dashboard(
     console.print(f"[green]Dashboard scritta in[/] {percorso.resolve()}")
 
 
+@app.command("mcp-gateway")
+def mcp_gateway(
+    state_dir: Optional[Path] = typer.Option(None, help="Cartella stato EcoTokens (default ~/.ecotokens)"),
+) -> None:
+    """Avvia il router STDIO Zero-Bloat MCP (3 meta-tool al posto di 100+ schemi)."""
+    from .mcp_zerobloat import run_stdio_gateway_loop
+
+    run_stdio_gateway_loop(state_dir=state_dir)
+
+
+@app.command("mcp-audit")
+def mcp_audit(
+    live: bool = typer.Option(False, "--live", help="Interroga dal vivo i sottoprocessi MCP configurati"),
+) -> None:
+    """Scansiona i client AI locali e misura lo spreco di token negli schemi MCP."""
+    import json
+    from .mcp_zerobloat import audit_mcp_clients
+
+    console.print_json(json.dumps(audit_mcp_clients(probe_live=live)))
+
+
+@app.command("mcp-compress")
+def mcp_compress() -> None:
+    """Comprimi tutti i client AI rilevati dietro EcoTokens Zero-Bloat con backup SHA-256."""
+    import json
+    from .mcp_zerobloat import compress_clients_to_zerobloat
+
+    console.print_json(json.dumps(compress_clients_to_zerobloat()))
+
+
+@app.command("mcp-rollback")
+def mcp_rollback() -> None:
+    """Ripristina le configurazioni MCP originali dai backup SHA-256."""
+    import json
+    from .mcp_zerobloat import rollback_zerobloat_clients
+
+    console.print_json(json.dumps(rollback_zerobloat_clients()))
+
+
+@app.command()
+def studio(
+    port: int = typer.Option(8794, help="Porta locale della UI Studio (default 8794)"),
+) -> None:
+    """Avvia EcoTokens 2.0 Studio UI locale (Zero-Bloat MCP + API Gateway)."""
+    from .studio_ui import launch_studio
+
+    launch_studio(port=port)
+
+
 def main() -> None:
     app()
 
