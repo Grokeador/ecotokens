@@ -56,6 +56,7 @@ SOLA_LETTURA = [
     "purge",
     "substitutions",
     "consiglia",
+    "mcp-audit",
 ]
 
 # Comandi di misura: da 9 a 63 secondi l'uno, perche' ognuno gira un carico
@@ -88,7 +89,9 @@ LENTI = [
 # mette in nessuna delle due liste, questo test lo dice. Senza, l'elenco
 # invecchia in silenzio - ed e' gia' successo in questo file, dove la lista dei
 # comandi era scritta a mano e ne mancavano sette.
-NON_ESEGUIBILI = {"serve", "verifica"}
+# `mcp-gateway` e `studio` restano attivi come `serve`; `mcp-compress` e `mcp-rollback`
+# modificano file utente reali e sono testati in isolamento in `tests/test_zerobloat_mcp.py`.
+NON_ESEGUIBILI = {"serve", "verifica", "mcp-gateway", "studio", "mcp-compress", "mcp-rollback"}
 
 
 @pytest.mark.parametrize("nome", SOLA_LETTURA)

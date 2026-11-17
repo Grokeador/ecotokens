@@ -9,6 +9,17 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/), le
 versioni [SemVer](https://semver.org/lang/it/). Finché la maggiore è 0, un
 cambio della minore può contenere rotture: sono elencate per prime.
 
+## [0.4.0] - 2026-11-17
+
+### Nuovo
+
+- **Zero-Bloat MCP Router (`ecotokens mcp-gateway`, `Launch_EcoTokens_Studio.bat`, `ecotokens studio`)**:
+  riduce fino al 90%+ il bloat di schemi MCP iniettati in ogni turno (30K–60K+ token →
+  3 meta-tool compatti da ~420 token), con discovery JIT `ecotokens_search_tools`, spawn on-demand
+  dei sottoserver STDIO, **Output Bloat Shield** (`>8KB` salvati in `~/.ecotokens/overflow/`),
+  **Loop Breaker `3x`** su chiamate identiche ripetute e **1-Click Multi-Client Compress + Rollback SHA-256**
+  (coperto dalla suite isolata `tests/test_zerobloat_mcp.py` in pure Python stdlib).
+
 ## [Non rilasciato]
 
 ### Nuovo

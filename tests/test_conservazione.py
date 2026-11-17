@@ -14,6 +14,8 @@ guardano soprattutto la cosa che non deve cambiare.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from ecotokens.store.db import Database
@@ -50,6 +52,9 @@ async def registra(store, giorno: str, quante: int = 1, **valori) -> None:
 # --- cio' che non deve cambiare -------------------------------------------
 
 
+RECENTE = (date.today() - timedelta(days=2)).isoformat()
+
+
 async def test_compattare_non_sposta_di_un_centesimo_i_totali(store):
     """La sola cosa che rende la compattazione accettabile.
 
@@ -58,7 +63,7 @@ async def test_compattare_non_sposta_di_un_centesimo_i_totali(store):
     progetto passa il tempo a correggere - stavolta introdotto di proposito.
     """
     await registra(store, "2020-01-01", 5)
-    await registra(store, "2026-08-28", 3)
+    await registra(store, RECENTE, 3)
     prima = await store.stats()
 
     await store.compatta_consumi(keep_detail_days=30)
@@ -72,7 +77,7 @@ async def test_compattare_non_sposta_di_un_centesimo_i_totali(store):
 async def test_il_dettaglio_vecchio_sparisce_davvero(store):
     """Altrimenti non e' una compattazione, e' una copia."""
     await registra(store, "2020-01-01", 5)
-    await registra(store, "2026-08-28", 3)
+    await registra(store, RECENTE, 3)
 
     esito = await store.compatta_consumi(keep_detail_days=30)
     assert esito["compattate"] == 5
@@ -106,7 +111,7 @@ async def test_ripetere_la_compattazione_non_raddoppia_niente(store):
 
 
 async def test_senza_niente_da_compattare_non_fa_niente(store):
-    await registra(store, "2026-08-28", 3)
+    await registra(store, RECENTE, 3)
     esito = await store.compatta_consumi(keep_detail_days=30)
     assert esito["compattate"] == 0
     assert (await store.db.query_one("SELECT COUNT(*) AS n FROM usage_events"))["n"] == 3
